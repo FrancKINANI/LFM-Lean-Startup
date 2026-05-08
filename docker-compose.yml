@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # DATABASE: PostgreSQL
+  # Stocke les patterns de risque, benchmarks, et leçons apprises.
+  # ===========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: lfm_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lfm_lean_startup}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Initialisation automatique du schéma
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/10_schema.sql
+      # Initialisation optionnelle des seeds (si on veut tout automatiser)
+      # - ./database/seeds/seeds_runner.sql:/docker-entrypoint-initdb.d/20_seeds.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================================
+  # EXPERIMENT TRACKING: MLflow
+  # Suivi des métriques de fine-tuning et registre des modèles LFM.
+  # ===========================================================================
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.3
+    container_name: lfm_mlflow
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow.db
+      - MLFLOW_ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - ./mlflow.db:/mlflow/mlflow.db
+      - mlflow_artifacts:/mlflow/artifacts
+    command: >
+      mlflow server 
+      --backend-store-uri sqlite:///mlflow.db 
+      --default-artifact-root /mlflow/artifacts 
+      --host 0.0.0.0 
+      --port 5000
+
+  # ===========================================================================
+  # ORCHESTRATION: Apache Airflow
+  # Note: Pour une installation locale simple, on utilise une image légère
+  # ou on suppose qu'Airflow tourne sur l'hôte. 
+  # Ici on propose une config Docker-compose minimale pour Airflow.
+  # ===========================================================================
+  airflow-common:
+    &airflow-common
+    image: apache/airflow:2.8.1-python3.10
+    environment:
+      &airflow-common-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres/${POSTGRES_DB:-lfm_lean_startup}
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+      PROJECT_DIR: /opt/airflow/project
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - .:/opt/airflow/project
+    user: "${AIRFLOW_UID:-5000}:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+
+volumes:
+  postgres_data:
+  mlflow_artifacts:

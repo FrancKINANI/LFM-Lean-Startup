@@ -2,7 +2,7 @@ stages:
   build_datasets:
     cmd: python src/data/build_lean_datasets.py
     deps:
-      - src/ata/build_lean_datasets.py
+      - src/data/build_lean_datasets.py
     outs:
       - data/source/full_dataset.jsonl  # Source canonique
       - data/splits/                    # Dossier des splits
@@ -12,7 +12,7 @@ stages:
     cmd: python src/data/report_dataset_metrics.py
     deps:
       - data/source/full_dataset.jsonl
-      - data/report_dataset_metrics.py
+      - src/data/report_dataset_metrics.py
     metrics:
-      - DATASET_METRICS_REPORT.md:     # Rapport de métriques
+      - src/data/reports/metrics_lean.md:     # Rapport de métriques
           cache: false

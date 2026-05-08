@@ -2,4 +2,3 @@
     remote = storage
     autostage = true
 ['remote "storage"']
-
