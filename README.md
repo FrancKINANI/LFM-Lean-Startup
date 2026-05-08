@@ -86,20 +86,67 @@ Le dataset est stocké au format **ChatML** (compatible LFM2.5) dans `data/sourc
 
 1.  **Installation des dépendances :**
     ```bash
+    source venv/bin/activate
     pip install -r requirements.txt
     ```
-2.  **Initialisation des données :**
-    ```bash
-    dvc pull
-    ```
-3.  **Lancement des services (Postgres, MLflow, Airflow) :**
+
+2.  **Lancement des services (Postgres, MLflow, Airflow) :**
     ```bash
     docker-compose up -d
     ```
-4.  **Peuplement de la base de données :**
+
+3.  **Peuplement de la base de données & Data :**
     ```bash
-    python src/database/seeds_runner.py # Si script disponible, ou via migrations
+    # Initialisation de la DB (schémas et seeds)
+    python src/database/seeds_runner.py
+    
+    # Récupération des données versionnées
+    dvc pull
     ```
+
+## 🔄 Cycle de Vie MLOps (Pipeline DVC)
+
+Le projet utilise **DVC** pour orchestrer tout le pipeline. Pour reproduire l'intégralité du cycle (génération → metrics → training → evaluation) :
+
+```bash
+dvc repro
+```
+
+### Détail des étapes :
+*   `build_datasets` : Génère 4000 exemples synthétiques au format ChatML.
+*   `report_metrics` : Analyse la distribution et la qualité du dataset.
+*   `train_model` : Lance le fine-tuning LoRA sur le modèle Liquid LFM.
+*   `evaluate_model` : Évalue le modèle sur le set de test et logue les résultats dans MLflow.
+
+## 🌐 Utilisation de l'API (FastAPI)
+
+Pour exposer l'analyste en tant que service :
+
+```bash
+# Démarrage du serveur
+python src/api/main.py
+```
+
+**Endpoint principal :** `POST /analyze`
+```json
+{
+  "query": "Analyse le risque d'une marketplace de services B2B avec 5% de rétention."
+}
+```
+
+## 🧪 Tests & Qualité
+
+La robustesse du code et du parsing des outils est assurée par `pytest` :
+
+```bash
+PYTHONPATH=. pytest tests/ -v
+```
+
+## 📈 Monitoring (MLflow)
+
+Toutes les expériences, métriques d'entraînement et rapports d'évaluation sont accessibles sur l'interface MLflow :
+*   **URL :** `http://localhost:5000`
+*   **Expériences :** `LFM-Lean-Startup-SFT` et `LFM-Lean-Startup-Evaluation`.
 
 ---
 *Développé pour transformer la théorie du Lean Startup en outils d'aide à la décision actionnables.*
