@@ -1,0 +1,40 @@
+schema: '2.0'
+stages:
+  build_datasets:
+    cmd: python data/build_lean_datasets.py
+    deps:
+    - path: data/build_lean_datasets.py
+      hash: md5
+      md5: e7733765ffdcf04f131a9a1187e46083
+      size: 2576
+    outs:
+    - path: data/liquid/
+      hash: md5
+      md5: 76f03753e3da45952100368316983be7.dir
+      size: 1889320
+      nfiles: 1
+    - path: data/source/full_dataset.jsonl
+      hash: md5
+      md5: 184b470873221a124c5046d6dd562a6e
+      size: 2293630
+    - path: data/splits/
+      hash: md5
+      md5: fa3b3a694d02d6641a328638ab30fa30.dir
+      size: 2293630
+      nfiles: 2
+  report_metrics:
+    cmd: python data/report_dataset_metrics.py
+    deps:
+    - path: data/report_dataset_metrics.py
+      hash: md5
+      md5: 3933bb4f27b8a450c6892a4f7db243bf
+      size: 853
+    - path: data/source/full_dataset.jsonl
+      hash: md5
+      md5: 184b470873221a124c5046d6dd562a6e
+      size: 2293630
+    outs:
+    - path: DATASET_METRICS_REPORT.md
+      hash: md5
+      md5: b31c926c01bbb59affb4e6e475fa444e
+      size: 207
