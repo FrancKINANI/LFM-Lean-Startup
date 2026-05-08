@@ -1,0 +1,11 @@
+# Dépendances lourdes pour exécution sur Google Colab (GPU)
+torch
+transformers
+peft
+trl
+datasets
+accelerate
+bitsandbytes
+scipy
+sentencepiece
+protobuf<5.0.0

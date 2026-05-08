@@ -104,6 +104,17 @@ Le dataset est stocké au format **ChatML** (compatible LFM2.5) dans `data/sourc
     docker-compose up -d
     ```
 
+## ☁️ Configuration Google Colab (Remote)
+
+Pour préparer votre environnement Colab avant l'entraînement ou l'inférence :
+
+1.  **Connexion SSH** (ou ouverture d'un Notebook).
+2.  **Exécution du script de setup** :
+    ```bash
+    !bash scripts/setup_colab.sh
+    ```
+    *Ce script installera `torch`, `transformers`, `peft` et toutes les dépendances nécessaires au GPU.*
+
 3.  **Peuplement de la base de données & Data :**
     ```bash
     # Initialisation de la DB (schémas et seeds)
