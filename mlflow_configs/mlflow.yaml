@@ -1,0 +1,22 @@
+# MLflow Configuration
+# Définit les paramètres pour le tracking des expériences et le Model Registry
+
+server:
+  host: "0.0.0.0"
+  port: 5000
+  backend_store_uri: "sqlite:///mlflow.db"
+  default_artifact_root: "./mlflow_artifacts"
+
+experiment:
+  name: "LFM-Lean-Startup-SFT"
+  tags:
+    project: "Lean Startup Analyst"
+    model: "Liquid LFM 2.5 350M"
+    task: "Tool Use / Fine-Tuning"
+
+# Paramètres utilisés par MLflow pour évaluer les LLMs
+evaluation:
+  metrics:
+    - name: "toxicity"
+    - name: "relevance"
+    - name: "faithfulness"

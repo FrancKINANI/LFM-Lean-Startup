@@ -16,3 +16,24 @@ stages:
     metrics:
       - src/data/reports/metrics_lean.md:     # Rapport de métriques
           cache: false
+
+  train_model:
+    cmd: python src/inference/train.py
+    deps:
+      - src/inference/train.py
+      - configs/training_config.yaml
+      - data/liquid/liquid_train.jsonl
+      - data/liquid/liquid_eval.jsonl
+    outs:
+      - artifacts/lfm25_350m_lean_startup/
+
+  evaluate_model:
+    cmd: python src/inference/evaluate.py
+    deps:
+      - src/inference/evaluate.py
+      - configs/inference_config.yaml
+      - data/splits/test.jsonl
+      - artifacts/lfm25_350m_lean_startup/
+    metrics:
+      - evaluation_report.json:
+          cache: false

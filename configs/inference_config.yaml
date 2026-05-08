@@ -1,0 +1,21 @@
+# Configuration pour l'inférence (Agent LFM Lean Startup)
+
+model:
+  base_model_id: "LiquidAI/LFM2.5-350M-Base"
+  adapter_path: "artifacts/lfm25_350m_lean_startup"  # Pointeur vers les poids LoRA entraînés
+  device_map: "auto"
+  torch_dtype: "bfloat16" # bf16 pour la performance sur GPUs récents
+  trust_remote_code: true
+
+generation:
+  max_new_tokens: 512
+  temperature: 0.2     # Température basse car on veut de la rigueur analytique
+  top_p: 0.9
+  repetition_penalty: 1.1
+
+agent:
+  max_iterations: 3
+  system_prompt: |
+    Tu es un analyste Lean Startup expert. Tu as accès à une base de données de patterns de risque, benchmarks et cas de startups via des outils SQL. 
+    Si tu as besoin d'informations factuelles (ex: "Quels sont les benchmarks d'un SaaS Seed?"), UTILISE LES OUTILS en appelant <|tool_call_start|>[tool_name(arg="val")]<|tool_call_end|>. 
+    Réponds toujours de façon structurée, factuelle et accessible.
