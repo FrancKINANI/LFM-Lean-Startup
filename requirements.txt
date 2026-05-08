@@ -155,9 +155,3 @@ yarl==1.23.0
 zc.lockfile==4.0
 zipp==3.23.1
 psycopg2-binary
-torch
-transformers
-peft
-trl
-datasets
-accelerate

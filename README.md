@@ -11,13 +11,21 @@ L'objectif est de construire un analyste capable de rendre accessible ce que les
 | **Informations sur une startup** | → **Évaluation de l'opportunité** d'investissement |
 | (stade, marché, équipe, modèle, traction...) | → **Identification des dangers** critiques (explication simple) |
 
-## 🏗️ Architecture : Les trois sources de compétence
+## 🏗️ Architecture Hybride : Local + Remote (Colab)
 
-Le modèle tire sa force de trois piliers complémentaires :
+Le projet est conçu pour fonctionner de manière hybride afin de pallier les limitations matérielles locales :
 
-1.  **FINE-TUNING (Poids du modèle)** : Apprentissage du raisonnement spécifique au domaine Lean Startup (évaluation, simplification, identification des signaux faibles).
-2.  **BASE POSTGRESQL (Tool Use)** : Accès à des données factuelles : cas réels, patterns de pivot, benchmarks sectoriels et indicateurs de risque connus.
-3.  **PROMPT SYSTÈME (Inférence)** : Cadre opérationnel et contexte spécifique de la startup analysée.
+1.  **ORCHESTRATION LOCALE (PC)** :
+    *   **Airflow & DVC** : Gestion du pipeline et versionnage des données.
+    *   **PostgreSQL** : Base de connaissances experte.
+    *   **MLflow** : Serveur de tracking centralisé pour les métriques.
+    *   **FastAPI** : Couche API pour l'interface utilisateur.
+
+2.  **EXÉCUTION DISTANTE (Google Colab / SSH)** :
+    *   **Fine-Tuning (SFT)** : Entraînement LoRA utilisant les GPUs T4/A100 de Colab.
+    *   **Inférence & Évaluation** : Test du modèle et génération de réponses complexes.
+    *   **Synchronisation** : Les poids du modèle et les logs MLflow sont renvoyés vers les serveurs locaux ou distants via SSH.
+
 
 ## 📊 Structure du Dataset de Fine-tuning
 
@@ -64,7 +72,8 @@ Le dataset est stocké au format **ChatML** (compatible LFM2.5) dans `data/sourc
 -   **Gestion de données :** DVC (Data Version Control).
 -   **Orchestration :** Apache Airflow (DAGs de build, training et eval).
 -   **Suivi :** MLflow (Tracking des expériences et registre de modèles).
--   **Fine-tuning :** Hugging Face `trl`, `peft` et `transformers` (LoRA).
+-   **Fine-tuning & Inférence (Remote) :** Hugging Face `trl`, `peft` et `transformers` (LoRA).
+-   **Connectivité :** SSH Tunneling (Colab ↔ Local).
 
 ## 📁 Structure du Projet
 
@@ -113,10 +122,10 @@ dvc repro
 ```
 
 ### Détail des étapes :
-*   `build_datasets` : Génère 4000 exemples synthétiques au format ChatML.
-*   `report_metrics` : Analyse la distribution et la qualité du dataset.
-*   `train_model` : Lance le fine-tuning LoRA sur le modèle Liquid LFM.
-*   `evaluate_model` : Évalue le modèle sur le set de test et logue les résultats dans MLflow.
+*   `build_datasets` (Local) : Génère 4000 exemples synthétiques au format ChatML.
+*   `report_metrics` (Local) : Analyse la distribution et la qualité du dataset.
+*   `train_model` (Colab) : Lance le fine-tuning LoRA sur le modèle Liquid LFM via SSH.
+*   `evaluate_model` (Colab) : Évalue le modèle et logue les résultats dans le MLflow local via tunnel SSH.
 
 ## 🌐 Utilisation de l'API (FastAPI)
 
