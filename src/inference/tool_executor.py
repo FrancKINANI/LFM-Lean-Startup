@@ -6,9 +6,9 @@ from src.database.queries import (
     get_lean_concept,
     get_investment_criteria,
     get_similar_startups,
-    get_pivot_cases,
-    execute_safe_tool_query
+    get_pivot_cases
 )
+from src.database.client import execute_safe_tool_query
 
 logger = logging.getLogger(__name__)
 
