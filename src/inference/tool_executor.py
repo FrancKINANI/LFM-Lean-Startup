@@ -59,10 +59,31 @@ class ToolExecutor:
         """
         Analyse le contenu généré par le modèle pour trouver des tool calls
         et les exécuter. Retourne une liste de messages de rôle 'tool'.
-        
-        Note: Cette implémentation simplifiée suppose un format : 
-        [tool_name(arg="val")]
         """
-        # TODO: Implémenter un parser robuste pour les balises <|tool_call_start|>
-        # Pour l'instant, on se concentre sur l'exécution
-        return []
+        import re
+        results = []
+        
+        # Regex robuste pour extraire toutes les balises <|tool_call_start|>[...]<|tool_call_end|>
+        pattern = r"<\|tool_call_start\|>\[(\w+)\((.*?)\)\]<\|tool_call_end\|>"
+        
+        for match in re.finditer(pattern, content):
+            tool_name = match.group(1)
+            args_str = match.group(2)
+            
+            # Parsing des arguments de type clé="valeur" ou clé='valeur'
+            args_dict = {}
+            arg_pattern = r'(\w+)\s*=\s*["\']([^"\']+)["\']'
+            for arg_match in re.finditer(arg_pattern, args_str):
+                args_dict[arg_match.group(1)] = arg_match.group(2)
+                
+            # Exécution de l'outil
+            tool_result = self.execute(tool_name, args_dict)
+            
+            # Ajout du résultat au format ChatML / Tool message
+            results.append({
+                "role": "tool",
+                "name": tool_name,
+                "content": tool_result
+            })
+            
+        return results
