@@ -1,15 +1,15 @@
 stages:
   build_datasets:
-    cmd: python data/build_lean_datasets.py
+    cmd: python src/data/build_lean_datasets.py
     deps:
-      - data/build_lean_datasets.py
+      - src/ata/build_lean_datasets.py
     outs:
       - data/source/full_dataset.jsonl  # Source canonique
       - data/splits/                    # Dossier des splits
       - data/liquid/                    # Dossier formaté pour Liquid AI
 
   report_metrics:
-    cmd: python data/report_dataset_metrics.py
+    cmd: python src/data/report_dataset_metrics.py
     deps:
       - data/source/full_dataset.jsonl
       - data/report_dataset_metrics.py
