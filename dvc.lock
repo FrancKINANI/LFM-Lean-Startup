@@ -5,30 +5,30 @@ stages:
     deps:
     - path: src/data/build_lean_datasets.py
       hash: md5
-      md5: 8209f1a2f4ae9981c6e0fd9c1afd37b3
-      size: 9793
+      md5: 0da9e9005d6c3aa8747ee40c4afd19b1
+      size: 9753
     outs:
     - path: data/liquid/
       hash: md5
-      md5: e7fd720bdae91cd17d1f289dbf698268.dir
-      size: 84788
+      md5: ee5346bc0d4aae98388a1e86e7c7b739.dir
+      size: 3888842
       nfiles: 3
     - path: data/source/full_dataset.jsonl
       hash: md5
-      md5: ccb5f816e9d28f458d00b907f98f41d6
-      size: 87476
+      md5: a7495b5ec9ab6cb0b592161559acefc9
+      size: 3996242
     - path: data/splits/
       hash: md5
-      md5: 7cc287c7c98c02558d9bc095894f36b1.dir
-      size: 87476
+      md5: 05ed98e0545345553841e7071ab25ff3.dir
+      size: 3996242
       nfiles: 3
   report_metrics:
     cmd: python src/data/report_dataset_metrics.py
     deps:
     - path: data/source/full_dataset.jsonl
       hash: md5
-      md5: ccb5f816e9d28f458d00b907f98f41d6
-      size: 87476
+      md5: a7495b5ec9ab6cb0b592161559acefc9
+      size: 3996242
     - path: src/data/report_dataset_metrics.py
       hash: md5
       md5: 2f263ac091d295bb889f629c9d62e11f
@@ -36,5 +36,5 @@ stages:
     outs:
     - path: src/data/reports/metrics_lean.md
       hash: md5
-      md5: 1cee427a7e84d7b01e890298bb555f9e
-      size: 1237
+      md5: b790801747fd2731a81bd428ad4b65dd
+      size: 1198

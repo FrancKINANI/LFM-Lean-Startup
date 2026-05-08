@@ -1,100 +1,126 @@
 import json
 import os
+import random
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-def generate_examples():
-    """Génère des exemples synthétiques pour l'analyste Lean Startup."""
+# --- Données pour générer des variations ---
+sectors = ["SaaS B2B", "Marketplace", "Fintech", "Healthtech", "Edtech", "Agritech", "E-commerce", "Deeptech", "Web3", "CleanTech"]
+stages = ["Seed", "Pre-Seed", "Series A", "Series B", "Ideation"]
+metrics = ["MRR", "ARR", "CAC", "LTV", "Churn", "NPS", "DAU/MAU", "Burn Rate"]
+problems = [
+    "faible rétention", "coût d'acquisition trop élevé (CAC)", "marché trop petit (TAM)",
+    "manque de product-market fit", "burn rate explosif", "concurrence féroce",
+    "équipe sans profil technique", "modèle économique flou", "dépendance à un seul client"
+]
+strengths = [
+    "forte traction organique", "technologie propriétaire défendable", "équipe expérimentée",
+    "marché en hypercroissance", "excellente rétention (net revenue retention > 120%)",
+    "coûts d'acquisition faibles", "preuve de concept validée avec des clients payants"
+]
+
+def generate_diagnostic(idx):
+    sector = random.choice(sectors)
+    stage = random.choice(stages)
+    users = random.randint(100, 10000)
+    mrr = random.randint(1000, 100000)
+    problem = random.choice(problems)
+    strength = random.choice(strengths)
+    
+    return {
+        "category": "diagnostic",
+        "messages": [
+            {"role": "system", "content": "Tu es un analyste Lean Startup expert. Tu identifies les forces, faiblesses et dangers d'un projet."},
+            {"role": "user", "content": f"Analyse le projet {idx} : Startup {sector} en {stage}. {users} utilisateurs actifs, MRR de {mrr}€. Le CEO signale une {problem} mais met en avant une {strength}."},
+            {"role": "assistant", "content": f"## Analyse du Projet {idx}\n\n### Forces\n- **Avantage compétitif** : La {strength} est un excellent signal à ce stade ({stage}).\n- **Traction financière** : Un MRR de {mrr}€ prouve qu'il y a une volonté de payer dans ce secteur {sector}.\n\n### Faiblesses\n- **Point de friction** : La {problem} est inquiétante. Cela indique un problème potentiel au niveau du produit ou du ciblage.\n\n### Dangers\n- **Risque d'épuisement (Burnout/Cash)** : Si la {problem} n'est pas résolue rapidement, vous risquez de gaspiller votre trésorerie (Burn Rate) en essayant de forcer la croissance (Leaky Bucket). Focalisez-vous sur la résolution de ce point avant de chercher à acquérir de nouveaux utilisateurs."}
+        ]
+    }
+
+def generate_danger(idx):
+    sector = random.choice(sectors)
+    problem1 = random.choice(problems)
+    problem2 = random.choice(problems)
+    
+    return {
+        "category": "dangers",
+        "messages": [
+            {"role": "system", "content": "Tu es un expert en gestion de risques Lean Startup. Liste les dangers critiques simplement."},
+            {"role": "user", "content": f"Quels sont les risques pour un projet {sector} qui souffre de {problem1} et de {problem2} ?"},
+            {"role": "assistant", "content": f"Voici les dangers critiques pour ce projet {sector} :\n\n1. **Risque mortel (Fatal)** : La {problem1} est souvent le signe d'une mauvaise adéquation produit-marché (Product-Market Fit). Si les utilisateurs ne restent pas ou coûtent trop cher, le modèle s'effondre.\n2. **Vulnérabilité systémique** : La {problem2} aggrave la situation. Vous risquez d'être à court de trésorerie avant d'avoir pu itérer.\n3. **Pivot nécessaire** : Il faut arrêter d'investir dans la croissance (Scale) et revenir à la phase de découverte client (Customer Discovery) pour corriger ces failles fondamentales."}
+        ]
+    }
+
+def generate_investment(idx):
+    sector = random.choice(sectors)
+    stage = random.choice(stages)
+    mrr = random.randint(0, 500000)
+    ask = random.randint(100000, 5000000)
+    
+    if mrr > 100000 and ask < 2000000:
+        decision = "GO (Très favorable)"
+        arg = f"Le ratio levée ({ask}€) sur traction (MRR {mrr}€) est excellent. La startup est très efficiente (capital efficient)."
+    elif mrr < 5000 and ask > 1000000:
+        decision = "NO-GO (Trop risqué)"
+        arg = f"Lever {ask}€ avec seulement {mrr}€ de MRR est déraisonnable au stade {stage}. Le risque de dilution et d'exécution est trop grand. Ils doivent prouver la traction d'abord."
+    else:
+        decision = "MAYBE (Besoin d'approfondir)"
+        arg = f"Les métriques sont dans la moyenne (MRR {mrr}€ pour une levée de {ask}€). Le succès dépendra de l'équipe et de la taille réelle du marché {sector}."
+
+    return {
+        "category": "investissement",
+        "messages": [
+            {"role": "system", "content": "Tu es un investisseur VC. Donne une recommandation go/no-go argumentée."},
+            {"role": "user", "content": f"Dossier {idx} : Startup {sector} en {stage}. MRR actuel de {mrr}€. Ils demandent une levée de {ask}€."},
+            {"role": "assistant", "content": f"### Recommandation : {decision}\n\n**Arguments :**\n- **Analyse Financière** : {arg}\n- **Stade d'investissement** : En {stage}, on s'attend à une dynamique spécifique. Ici, les chiffres montrent une trajectoire claire.\n- **Conclusion** : Concentrez votre due diligence sur la capacité de l'équipe à exécuter le plan avec ces fonds."}
+        ]
+    }
+
+def generate_simplification(idx):
+    concept = random.choice(["Pivot", "MVP (Minimum Viable Product)", "Product-Market Fit", "Customer Discovery", "Vanity Metrics", "CAC (Coût d'Acquisition Client)", "LTV (Lifetime Value)"])
+    analogy = ""
+    
+    if "MVP" in concept:
+        analogy = "Si vous voulez construire une voiture, votre MVP n'est pas une roue, c'est un skateboard. Il vous permet déjà de vous déplacer et de voir si les gens en ont besoin."
+    elif "Pivot" in concept:
+        analogy = "Un pivot, c'est comme utiliser le GPS : vous changez d'itinéraire parce qu'il y a des bouchons, mais votre destination finale reste la même."
+    elif "Vanity Metrics" in concept:
+        analogy = "C'est comme avoir beaucoup de followers sur Instagram mais personne qui achète vos produits. Ça flatte l'ego, mais ça ne paie pas les factures."
+    else:
+        analogy = f"Imaginez que {concept} est comme la fondation d'une maison. Sans elle, tout ce que vous construirez par la suite s'effondrera à la première difficulté."
+
+    return {
+        "category": "simplification",
+        "messages": [
+            {"role": "system", "content": "Tu es un mentor Lean Startup. Explique les concepts sans jargon."},
+            {"role": "user", "content": f"Peux-tu m'expliquer ce qu'est le concept de '{concept}' simplement ?"},
+            {"role": "assistant", "content": f"Bien sûr ! Le concept de **{concept}** est fondamental mais très simple à comprendre.\n\n**Explication simple :**\nIl s'agit d'une approche pour valider rapidement si ce que vous faites a de la valeur, sans gaspiller de temps ou d'argent.\n\n**Analogie :**\n{analogy}\n\nL'objectif est d'apprendre vite et de s'adapter à la réalité du terrain."}
+        ]
+    }
+
+def generate_dataset(num_examples=3500): # 3500 pour assurer environ 1000+ par set selon la demande
+    """Génère un large dataset synthétique."""
     examples = []
     
-    # Category 1: Diagnostic complet (35%)
-    diag_examples = [
-        {
-            "category": "diagnostic",
-            "messages": [
-                {"role": "system", "content": "Tu es un analyste Lean Startup expert. Tu identifies les forces, faiblesses et dangers d'un projet."},
-                {"role": "user", "content": "Analyse du projet : 'FreshDrop', une application de livraison de produits locaux en 30 minutes. 500 utilisateurs actifs, panier moyen 25€. L'équipe veut lever 2M€ pour acheter une flotte de camions électriques."},
-                {"role": "assistant", "content": "## Analyse de FreshDrop\n\n### Forces\n- **Traction initiale** : 500 utilisateurs actifs avec un panier moyen correct (25€).\n- **Alignement marché** : Demande pour le local et l'écologie.\n\n### Faiblesses\n- **Modèle Asset-Heavy** : L'achat d'une flotte de camions est risqué au stade early-stage.\n- **Logistique complexe** : La promesse des 30 minutes est difficile à tenir sans micro-hubs coûteux.\n\n### Dangers\n- **Brûlure de cash (Burn rate)** : L'investissement massif dans le matériel peut tuer la startup avant le Product-Market Fit.\n- **Unité de rentabilité (Unit Economics)** : Risque de perte sur chaque livraison à cause des coûts opérationnels."}
-            ]
-        },
-        {
-            "category": "diagnostic",
-            "messages": [
-                {"role": "system", "content": "Tu es un analyste Lean Startup expert. Tu identifies les forces, faiblesses et dangers d'un projet."},
-                {"role": "user", "content": "Projet : 'EduAI', plateforme de tutorat IA pour lycéens. 2000 inscrits, mais seulement 50 utilisent l'outil plus d'une fois par semaine. L'équipe se concentre sur l'ajout de nouvelles fonctionnalités de gamification."},
-                {"role": "assistant", "content": "## Analyse de EduAI\n\n### Forces\n- **Acquisition** : Bonne capacité à attirer des inscrits (2000).\n- **Secteur porteur** : L'IA dans l'éducation est en pleine explosion.\n\n### Faiblesses\n- **Rétention (Engagement)** : Très faible (2.5%). Le produit ne semble pas encore indispensable.\n- **Focus éparpillé** : Ajouter de la gamification avant d'avoir résolu le problème de valeur fondamentale est une erreur classique.\n\n### Dangers\n- **Produit 'Leaky Bucket'** : Vous dépensez de l'énergie pour remplir un seau percé. Sans rétention, la croissance est impossible.\n- **Solution en quête de problème** : L'IA est peut-être un gadget ici plutôt qu'une solution à un vrai 'pain point'."}
-            ]
-        }
-    ]
+    # Ratios: 35% diag, 25% danger, 25% invest, 15% simple
+    for i in range(int(num_examples * 0.35)):
+        examples.append(generate_diagnostic(i))
+        
+    for i in range(int(num_examples * 0.25)):
+        examples.append(generate_danger(i))
+        
+    for i in range(int(num_examples * 0.25)):
+        examples.append(generate_investment(i))
+        
+    for i in range(int(num_examples * 0.15)):
+        examples.append(generate_simplification(i))
+        
+    # Mélanger le dataset
+    random.seed(42)
+    random.shuffle(examples)
     
-    # Category 2: Identification des dangers (25%)
-    danger_examples = [
-        {
-            "category": "dangers",
-            "messages": [
-                {"role": "system", "content": "Tu es un expert en gestion de risques Lean Startup. Liste les dangers critiques simplement."},
-                {"role": "user", "content": "Quels sont les risques pour un SaaS B2B qui a beaucoup d'utilisateurs gratuits mais aucun payant après 6 mois ?"},
-                {"role": "assistant", "content": "Voici les dangers critiques :\n1. **Vanity Metrics** : Vos 1000 utilisateurs gratuits vous donnent l'illusion du succès, mais ils ne valident pas la valeur économique.\n2. **Manque de Willingness-to-Pay** : Votre produit est peut-être 'nice to have' mais pas 'must have'.\n3. **Pivot tardif** : Vous risquez d'épuiser vos ressources sur la mauvaise cible."}
-            ]
-        },
-        {
-            "category": "dangers",
-            "messages": [
-                {"role": "system", "content": "Tu es un expert en gestion de risques Lean Startup. Liste les dangers critiques simplement."},
-                {"role": "user", "content": "On a une équipe de 10 développeurs qui travaillent sur le produit depuis 1 an sans avoir montré une seule version à un client potentiel. On attend que tout soit parfait."},
-                {"role": "assistant", "content": "C'est une situation de **danger extrême** :\n1. **Effet Tunnel** : Vous construisez quelque chose dont personne ne veut peut-être.\n2. **Coût d'opportunité** : Un an de salaire pour 10 personnes sans validation est un gaspillage immense.\n3. **Peur du feedback** : L'attente de la perfection cache souvent une peur de confronter la réalité du marché."}
-            ]
-        }
-    ]
-    
-    # Category 3: Évaluation d'investissement (25%)
-    invest_examples = [
-        {
-            "category": "investissement",
-            "messages": [
-                {"role": "system", "content": "Tu es un investisseur VC. Donne une recommandation go/no-go argumentée."},
-                {"role": "user", "content": "Dossier : Marketplace de NFT pour l'immobilier. Équipe de 2 développeurs. Pas encore de clients. Demandent 500k€."},
-                {"role": "assistant", "content": "### Recommandation : NO-GO\n\n**Arguments :**\n- **Marché saturé/descendant** : Le secteur NFT immobilier manque de clarté réglementaire et de demande réelle actuellement.\n- **Manque de validation** : Investir 500k€ sans une seule transaction ou lettre d'intention (LOI) est prématuré.\n- **Risque d'exécution** : L'équipe est purement technique, il manque un profil business/legal indispensable pour l'immobilier."}
-            ]
-        },
-        {
-            "category": "investissement",
-            "messages": [
-                {"role": "system", "content": "Tu es un investisseur VC. Donne une recommandation go/no-go argumentée."},
-                {"role": "user", "content": "Startup 'CleanClean' : Service de nettoyage écologique pour bureaux. MRR de 15k€, croissance de 20% mois sur mois. Cherchent 200k€ pour recruter des commerciaux."},
-                {"role": "assistant", "content": "### Recommandation : GO (Sous conditions)\n\n**Arguments :**\n- **Traction réelle** : Le MRR de 15k€ prouve qu'il y a un marché et une volonté de payer.\n- **Croissance saine** : 20% MoM est excellent pour un service de ce type.\n- **Utilisation des fonds** : Le recrutement de commerciaux pour scaler un modèle qui fonctionne est un usage logique du capital."}
-            ]
-        }
-    ]
-    
-    # Category 4: Simplification de concept (15%)
-    simple_examples = [
-        {
-            "category": "simplification",
-            "messages": [
-                {"role": "system", "content": "Tu es un mentor Lean Startup. Explique les concepts sans jargon."},
-                {"role": "user", "content": "C'est quoi un 'Pivot' ?"},
-                {"role": "assistant", "content": "Un **Pivot**, c'est comme changer de direction tout en gardant un pied ancré dans ce que vous avez appris. \n\nCe n'est pas un aveu d'échec, c'est une **correction de trajectoire**. Par exemple, vous réalisez que votre logiciel n'intéresse pas les grandes entreprises, mais que les petites associations l'adorent. Vous pivotez pour vous concentrer uniquement sur les associations."}
-            ]
-        },
-        {
-            "category": "simplification",
-            "messages": [
-                {"role": "system", "content": "Tu es un mentor Lean Startup. Explique les concepts sans jargon."},
-                {"role": "user", "content": "Explique-moi le MVP (Minimum Viable Product)."},
-                {"role": "assistant", "content": "Le **MVP**, c'est la version la plus simple de votre produit qui permet de commencer à apprendre. \n\nSi vous voulez construire une voiture, votre MVP n'est pas une roue, c'est une trottinette. Pourquoi ? Parce que la trottinette vous permet déjà de vous déplacer (la valeur principale) et de voir si les gens veulent vraiment aller d'un point A à un point B."}
-            ]
-        }
-    ]
-
-    # Mix and scale (for demo purposes we create 100 examples by repetition with shuffle)
-    all_templates = diag_examples * 18 + danger_examples * 12 + invest_examples * 12 + simple_examples * 8
-    # Total ~ 50 examples, adjusted to respect the percentages
-    
-    return all_templates
+    return examples
 
 def main():
-    # Setup paths
     root = Path(__file__).parent.parent.parent
     data_dir = root / "data"
     source_dir = data_dir / "source"
@@ -104,8 +130,9 @@ def main():
     for d in [source_dir, splits_dir, liquid_dir]:
         d.mkdir(parents=True, exist_ok=True)
         
-    # Generate
-    examples = generate_examples()
+    print("Génération du dataset enrichi en cours...")
+    # Génère 4000 exemples pour être large
+    examples = generate_dataset(4000)
     
     # Save source
     full_path = source_dir / "full_dataset.jsonl"
@@ -113,12 +140,13 @@ def main():
         for ex in examples:
             f.write(json.dumps(ex, ensure_ascii=False) + "\n")
             
-    # Split (80% train, 10% eval, 10% test)
-    train_data, temp_data = train_test_split(examples, test_size=0.2, random_state=42)
+    # L'utilisateur a demandé au moins 1000 lignes pour train, eval, test.
+    # On a 4000 lignes, on peut faire un split 2000 train / 1000 eval / 1000 test
+    # 50% train, 25% eval, 25% test
+    train_data, temp_data = train_test_split(examples, test_size=0.5, random_state=42)
     val_data, test_data = train_test_split(temp_data, test_size=0.5, random_state=42)
     
     for name, data in [("train", train_data), ("eval", val_data), ("test", test_data)]:
-        # Normal split
         path = splits_dir / f"{name}.jsonl"
         with open(path, "w", encoding="utf-8") as f:
             for ex in data:
@@ -130,7 +158,11 @@ def main():
             for ex in data:
                 f.write(json.dumps({"messages": ex["messages"]}, ensure_ascii=False) + "\n")
                 
-    print(f"Dataset built successfully: {len(examples)} examples.")
+    print(f"Dataset construit avec succès !")
+    print(f"- Total: {len(examples)} exemples")
+    print(f"- Train: {len(train_data)} exemples")
+    print(f"- Eval : {len(val_data)} exemples")
+    print(f"- Test : {len(test_data)} exemples")
 
 if __name__ == "__main__":
     main()

@@ -1,38 +1,30 @@
 # 📊 Rapport de Métriques du Dataset
 
-**Nombre total d'exemples :** 100
+**Nombre total d'exemples :** 4000
 
 ## 🗂️ Distribution par Catégorie
 
 | Catégorie | Nombre | Pourcentage |
 | :--- | :---: | :---: |
-| Diagnostic | 36 | 36.0% |
-| Dangers | 24 | 24.0% |
-| Investissement | 24 | 24.0% |
-| Simplification | 16 | 16.0% |
+| Diagnostic | 1400 | 35.0% |
+| Dangers | 1000 | 25.0% |
+| Investissement | 1000 | 25.0% |
+| Simplification | 600 | 15.0% |
 
 ## 📏 Statistiques de Contenu
 
-- **Longueur moyenne des messages (caractères) :** 706.8
-- **Exemple le plus court :** 465 caractères
-- **Exemple le plus long :** 993 caractères
+- **Longueur moyenne des messages (caractères) :** 824.4
+- **Exemple le plus court :** 590 caractères
+- **Exemple le plus long :** 1108 caractères
 
 ## 🧪 Échantillon (Dernier message assistant)
 
-**Catégorie :** diagnostic
+**Catégorie :** dangers
 
 ```text
-## Analyse de FreshDrop
+Voici les dangers critiques pour ce projet Deeptech :
 
-### Forces
-- **Traction initiale** : 500 utilisateurs actifs avec un panier moyen correct (25€).
-- **Alignement marché** : Demande pour le local et l'écologie.
-
-### Faiblesses
-- **Modèle Asset-Heavy** : L'achat d'une flotte de camions est risqué au stade early-stage.
-- **Logistique complexe** : La promesse des 30 minutes est difficile à tenir sans micro-hubs coûteux.
-
-### Dangers
-- **Brûlure de cash (Burn rate)** : L'investissement massif dans le matériel peut tuer la startup avant le Product-Market Fit.
-- **Unité de rentabilité (Unit Economics)** : Risque de perte sur chaque livraison à cause des coûts opérationnels.
+1. **Risque mortel (Fatal)** : La marché trop petit (TAM) est souvent le signe d'une mauvaise adéquation produit-marché (Product-Market Fit). Si les utilisateurs ne restent pas ou coûtent trop cher, le modèle s'effondre.
+2. **Vulnérabilité systémique** : La faible rétention aggrave la situation. Vous risquez d'être à court de trésorerie avant d'avoir pu itérer.
+3. **Pivot nécessaire** : Il faut arrêter d'investir dans la croissance (Scale) et revenir à la phase de découverte client (Customer Discovery) pour corriger ces failles fondamentales.
 ```
