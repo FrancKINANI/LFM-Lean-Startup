@@ -87,10 +87,10 @@ multidict==6.7.1
 networkx==3.6.1
 numpy==2.4.4
 omegaconf==2.3.0
-opentelemetry-api==1.41.1
-opentelemetry-proto==1.41.1
-opentelemetry-sdk==1.41.1
-opentelemetry-semantic-conventions==0.62b1
+opentelemetry-api
+opentelemetry-proto
+opentelemetry-sdk
+opentelemetry-semantic-conventions
 orjson==3.11.8
 packaging==26.2
 pandas==2.3.3
@@ -100,7 +100,6 @@ platformdirs==4.9.6
 prettytable==3.17.0
 prompt_toolkit==3.0.52
 propcache==0.4.1
-protobuf==6.33.6
 psutil==7.2.2
 pyarrow==23.0.1
 pyasn1==0.6.3
@@ -156,7 +155,6 @@ yarl==1.23.0
 zc.lockfile==4.0
 zipp==3.23.1
 psycopg2-binary
-google-generativeai
 torch
 transformers
 peft
