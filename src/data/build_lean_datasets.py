@@ -1,168 +1,245 @@
+"""
+src/data/build_lean_datasets.py
+================================
+Génère le dataset de fine-tuning SFT pour LFM2.5-350M.
+Combine la structure robuste du script utilisateur avec l'expansion synthétique 
+pour un volume et une diversité maximum.
+"""
+
 import json
+import logging
 import os
 import random
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from sklearn.model_selection import train_test_split
 
-# --- Données pour générer des variations ---
-sectors = ["SaaS B2B", "Marketplace", "Fintech", "Healthtech", "Edtech", "Agritech", "E-commerce", "Deeptech", "Web3", "CleanTech"]
-stages = ["Seed", "Pre-Seed", "Series A", "Series B", "Ideation"]
-metrics = ["MRR", "ARR", "CAC", "LTV", "Churn", "NPS", "DAU/MAU", "Burn Rate"]
-problems = [
-    "faible rétention", "coût d'acquisition trop élevé (CAC)", "marché trop petit (TAM)",
-    "manque de product-market fit", "burn rate explosif", "concurrence féroce",
-    "équipe sans profil technique", "modèle économique flou", "dépendance à un seul client"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+# Racine du projet
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Chemins de sortie
+OUTPUT_FULL     = PROJECT_ROOT / "data" / "source" / "full_dataset.jsonl"
+OUTPUT_SPLITS   = PROJECT_ROOT / "data" / "splits"
+OUTPUT_LIQUID   = PROJECT_ROOT / "data" / "liquid"
+
+# Configuration
+RANDOM_SEED = 42
+TOTAL_EXAMPLES = 4000
+TOOL_USE_RATIO = 0.35
+
+# --- Data Pools for Expansion ---
+SECTORS = ["SaaS B2B", "Marketplace", "Fintech", "Healthtech", "Edtech", "Agritech", "E-commerce", "Deeptech", "Web3", "CleanTech", "Proptech", "Adtech", "Insurtech", "Logitech", "Foodtech"]
+STAGES = ["Seed", "Pre-Seed", "Series A", "Series B", "Ideation", "MVP Ready", "Post-Pivot"]
+INVESTOR_PROFILES = ["angel", "vc", "impact", "strategic", "entrepreneur"]
+REGIONS = ["France", "Afrique Subsaharienne", "Maroc", "USA", "Europe", "Asie du Sud-Est"]
+
+PROBLEMS = [
+    "faible rétention (retention rate < 10%)", "coût d'acquisition trop élevé (CAC > LTV)", 
+    "marché trop petit (TAM < 100M€)", "manque de product-market fit (PMF)", 
+    "burn rate explosif", "concurrence féroce (incumbents dominants)",
+    "équipe sans profil technique (no-code fragile)", "modèle économique flou", 
+    "dépendance à un seul client (> 50% du CA)", "vitesse d'itération trop lente"
 ]
-strengths = [
-    "forte traction organique", "technologie propriétaire défendable", "équipe expérimentée",
-    "marché en hypercroissance", "excellente rétention (net revenue retention > 120%)",
-    "coûts d'acquisition faibles", "preuve de concept validée avec des clients payants"
+STRENGTHS = [
+    "forte traction organique (> 30% MoM)", "technologie propriétaire défendable (brevet/IP)", 
+    "équipe expérimentée (ex-founders)", "marché en hypercroissance (> 20% CAGR)", 
+    "excellente rétention (net revenue retention > 120%)", "coûts d'acquisition faibles (SEO/Viral)", 
+    "preuve de concept validée avec des clients payants (LoI/Pilot)", "partenariats stratégiques signés"
 ]
 
-def generate_diagnostic(idx):
-    sector = random.choice(sectors)
-    stage = random.choice(stages)
-    users = random.randint(100, 10000)
-    mrr = random.randint(1000, 100000)
-    problem = random.choice(problems)
-    strength = random.choice(strengths)
-    
-    return {
-        "category": "diagnostic",
-        "messages": [
-            {"role": "system", "content": "Tu es un analyste Lean Startup expert. Tu identifies les forces, faiblesses et dangers d'un projet."},
-            {"role": "user", "content": f"Analyse le projet {idx} : Startup {sector} en {stage}. {users} utilisateurs actifs, MRR de {mrr}€. Le CEO signale une {problem} mais met en avant une {strength}."},
-            {"role": "assistant", "content": f"## Analyse du Projet {idx}\n\n### Forces\n- **Avantage compétitif** : La {strength} est un excellent signal à ce stade ({stage}).\n- **Traction financière** : Un MRR de {mrr}€ prouve qu'il y a une volonté de payer dans ce secteur {sector}.\n\n### Faiblesses\n- **Point de friction** : La {problem} est inquiétante. Cela indique un problème potentiel au niveau du produit ou du ciblage.\n\n### Dangers\n- **Risque d'épuisement (Burnout/Cash)** : Si la {problem} n'est pas résolue rapidement, vous risquez de gaspiller votre trésorerie (Burn Rate) en essayant de forcer la croissance (Leaky Bucket). Focalisez-vous sur la résolution de ce point avant de chercher à acquérir de nouveaux utilisateurs."}
-        ]
-    }
+# =============================================================================
+# STRUCTURES DE DONNÉES (User's robust classes)
+# =============================================================================
 
-def generate_danger(idx):
-    sector = random.choice(sectors)
-    problem1 = random.choice(problems)
-    problem2 = random.choice(problems)
-    
-    return {
-        "category": "dangers",
-        "messages": [
-            {"role": "system", "content": "Tu es un expert en gestion de risques Lean Startup. Liste les dangers critiques simplement."},
-            {"role": "user", "content": f"Quels sont les risques pour un projet {sector} qui souffre de {problem1} et de {problem2} ?"},
-            {"role": "assistant", "content": f"Voici les dangers critiques pour ce projet {sector} :\n\n1. **Risque mortel (Fatal)** : La {problem1} est souvent le signe d'une mauvaise adéquation produit-marché (Product-Market Fit). Si les utilisateurs ne restent pas ou coûtent trop cher, le modèle s'effondre.\n2. **Vulnérabilité systémique** : La {problem2} aggrave la situation. Vous risquez d'être à court de trésorerie avant d'avoir pu itérer.\n3. **Pivot nécessaire** : Il faut arrêter d'investir dans la croissance (Scale) et revenir à la phase de découverte client (Customer Discovery) pour corriger ces failles fondamentales."}
-        ]
-    }
+@dataclass
+class Message:
+    role: str     # "system" | "user" | "assistant" | "tool"
+    content: str
 
-def generate_investment(idx):
-    sector = random.choice(sectors)
-    stage = random.choice(stages)
-    mrr = random.randint(0, 500000)
-    ask = random.randint(100000, 5000000)
+@dataclass
+class Example:
+    messages: list[Message]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "messages": [{"role": m.role, "content": m.content} for m in self.messages],
+            "metadata": self.metadata,
+        }
+
+# =============================================================================
+# SYSTEM PROMPTS
+# =============================================================================
+
+SYSTEM_PROMPT_WITH_TOOLS = """Tu es un analyste Lean Startup expert. Tu évalues les opportunités d'investissement et identifies les dangers critiques pour les startups.
+
+Ton rôle :
+- Analyser les informations fournies sur une startup en texte libre
+- Identifier les risques critiques de manière claire et accessible
+- Évaluer l'opportunité d'investissement selon le profil de l'interlocuteur
+- Rendre accessible ce que les whitepapers et documents techniques rendent opaque
+- T'appuyer sur des données réelles (benchmarks, cas similaires) via tes outils
+
+Ton style :
+- Clair, structuré, sans jargon inutile
+- Exigeant sur les faits, bienveillant sur la forme
+- Adapté à l'interlocuteur (investisseur ou entrepreneur)
+
+List of tools: [{"name": "query_postgresql", "description": "Interroge la base de données PostgreSQL contenant des cas de startups, des patterns de risque connus, des benchmarks sectoriels, des concepts Lean Startup et des critères d'investissement.", "parameters": {"type": "object", "properties": {"sql": {"type": "string", "description": "Requête SQL SELECT à exécuter. Tables : startups, pivot_cases, risk_patterns, sector_benchmarks, lean_concepts, investment_criteria."}}, "required": ["sql"]}}]"""
+
+SYSTEM_PROMPT_NO_TOOLS = """Tu es un analyste Lean Startup expert. Tu identifies les forces, faiblesses et dangers d'un projet de manière claire et structurée."""
+
+# =============================================================================
+# GENERATORS
+# =============================================================================
+
+def format_tool_call(sql: str) -> str:
+    return f'<|tool_call_start|>[query_postgresql(sql="{sql}")]<|tool_call_end|>'
+
+def generate_diagnostic(idx, tool_use=False):
+    sector = random.choice(SECTORS)
+    stage = random.choice(STAGES)
+    problem = random.choice(PROBLEMS)
+    strength = random.choice(STRENGTHS)
+    region = random.choice(REGIONS)
+    profile = random.choice(INVESTOR_PROFILES)
     
-    if mrr > 100000 and ask < 2000000:
-        decision = "GO (Très favorable)"
-        arg = f"Le ratio levée ({ask}€) sur traction (MRR {mrr}€) est excellent. La startup est très efficiente (capital efficient)."
-    elif mrr < 5000 and ask > 1000000:
-        decision = "NO-GO (Trop risqué)"
-        arg = f"Lever {ask}€ avec seulement {mrr}€ de MRR est déraisonnable au stade {stage}. Le risque de dilution et d'exécution est trop grand. Ils doivent prouver la traction d'abord."
+    messages = []
+    messages.append(Message("system", SYSTEM_PROMPT_WITH_TOOLS if tool_use else SYSTEM_PROMPT_NO_TOOLS))
+    messages.append(Message("user", f"Analyse le projet {idx} : Startup {sector} en {stage} ({region}). On a une {strength} mais on galère avec une {problem}. Je suis {profile}."))
+    
+    if tool_use:
+        sql = f"SELECT pattern_name, criticality, simple_explain FROM risk_patterns WHERE (sector = '{sector.lower()}' OR sector IS NULL) LIMIT 3"
+        messages.append(Message("assistant", format_tool_call(sql)))
+        
+        tool_data = {"status": "success", "data": [{"pattern_name": "Market Risk", "criticality": "high", "simple_explain": f"La {problem} est un signal d'alarme."}]}
+        messages.append(Message("tool", json.dumps(tool_data, ensure_ascii=False)))
+        
+        messages.append(Message("assistant", f"## Diagnostic de votre projet {sector}\n\nL'analyse des patterns de risque confirme que votre {problem} est un point bloquant majeur malgré votre {strength}. **Conseil** : Focalisez-vous sur la validation client avant de scaler."))
     else:
-        decision = "MAYBE (Besoin d'approfondir)"
-        arg = f"Les métriques sont dans la moyenne (MRR {mrr}€ pour une levée de {ask}€). Le succès dépendra de l'équipe et de la taille réelle du marché {sector}."
+        messages.append(Message("assistant", f"### Analyse du Projet {idx}\n\n**Forces** : {strength}.\n**Faiblesses** : {problem}.\n**Verdict** : Risque élevé lié au stade {stage}. Ne pas négliger l'impact de la concurrence en {region}."))
 
-    return {
-        "category": "investissement",
-        "messages": [
-            {"role": "system", "content": "Tu es un investisseur VC. Donne une recommandation go/no-go argumentée."},
-            {"role": "user", "content": f"Dossier {idx} : Startup {sector} en {stage}. MRR actuel de {mrr}€. Ils demandent une levée de {ask}€."},
-            {"role": "assistant", "content": f"### Recommandation : {decision}\n\n**Arguments :**\n- **Analyse Financière** : {arg}\n- **Stade d'investissement** : En {stage}, on s'attend à une dynamique spécifique. Ici, les chiffres montrent une trajectoire claire.\n- **Conclusion** : Concentrez votre due diligence sur la capacité de l'équipe à exécuter le plan avec ces fonds."}
-        ]
-    }
+    return Example(messages=messages, metadata={"category": "diagnostic_complet", "sector": sector, "has_tool_use": tool_use, "region": region, "investor_profile": profile})
 
-def generate_simplification(idx):
-    concept = random.choice(["Pivot", "MVP (Minimum Viable Product)", "Product-Market Fit", "Customer Discovery", "Vanity Metrics", "CAC (Coût d'Acquisition Client)", "LTV (Lifetime Value)"])
-    analogy = ""
+def generate_danger(idx, tool_use=False):
+    sector = random.choice(SECTORS)
+    p1, p2 = random.sample(PROBLEMS, 2)
+    profile = random.choice(INVESTOR_PROFILES)
     
-    if "MVP" in concept:
-        analogy = "Si vous voulez construire une voiture, votre MVP n'est pas une roue, c'est un skateboard. Il vous permet déjà de vous déplacer et de voir si les gens en ont besoin."
-    elif "Pivot" in concept:
-        analogy = "Un pivot, c'est comme utiliser le GPS : vous changez d'itinéraire parce qu'il y a des bouchons, mais votre destination finale reste la même."
-    elif "Vanity Metrics" in concept:
-        analogy = "C'est comme avoir beaucoup de followers sur Instagram mais personne qui achète vos produits. Ça flatte l'ego, mais ça ne paie pas les factures."
+    messages = [Message("system", SYSTEM_PROMPT_WITH_TOOLS if tool_use else SYSTEM_PROMPT_NO_TOOLS)]
+    messages.append(Message("user", f"Quels sont les dangers critiques pour un projet {sector} souffrant de {p1} et {p2} ? Je suis {profile}."))
+    
+    if tool_use:
+        sql = f"SELECT pattern_name, criticality, simple_explain FROM risk_patterns WHERE sector = '{sector.lower()}' AND criticality = 'critical'"
+        messages.append(Message("assistant", format_tool_call(sql)))
+        messages.append(Message("tool", json.dumps({"status": "success", "data": [{"pattern_name": "Burn Rate", "criticality": "critical", "simple_explain": "Perte de cash rapide."}]}, ensure_ascii=False)))
+        messages.append(Message("assistant", f"En plus du risque de Burn Rate, vos problèmes de {p1} et {p2} sont mortels. Priorité : fixer {p1}."))
     else:
-        analogy = f"Imaginez que {concept} est comme la fondation d'une maison. Sans elle, tout ce que vous construirez par la suite s'effondrera à la première difficulté."
+        messages.append(Message("assistant", f"Dangers identifiés pour {sector} :\n1. **{p1}** (Critique)\n2. **{p2}** (Élevé)"))
+        
+    return Example(messages=messages, metadata={"category": "identification_des_dangers", "sector": sector, "has_tool_use": tool_use, "investor_profile": profile})
 
-    return {
-        "category": "simplification",
-        "messages": [
-            {"role": "system", "content": "Tu es un mentor Lean Startup. Explique les concepts sans jargon."},
-            {"role": "user", "content": f"Peux-tu m'expliquer ce qu'est le concept de '{concept}' simplement ?"},
-            {"role": "assistant", "content": f"Bien sûr ! Le concept de **{concept}** est fondamental mais très simple à comprendre.\n\n**Explication simple :**\nIl s'agit d'une approche pour valider rapidement si ce que vous faites a de la valeur, sans gaspiller de temps ou d'argent.\n\n**Analogie :**\n{analogy}\n\nL'objectif est d'apprendre vite et de s'adapter à la réalité du terrain."}
-        ]
-    }
+def generate_investment(idx, tool_use=False):
+    sector = random.choice(SECTORS)
+    stage = random.choice(STAGES)
+    profile = random.choice(INVESTOR_PROFILES)
+    
+    messages = [Message("system", SYSTEM_PROMPT_WITH_TOOLS if tool_use else SYSTEM_PROMPT_NO_TOOLS)]
+    messages.append(Message("user", f"Dossier {idx} : Startup {sector} en {stage}. Devrais-je investir en tant que {profile} ?"))
+    
+    if tool_use:
+        sql = f"SELECT criterion_name, weight FROM investment_criteria WHERE investor_profile = '{profile}' AND stage = '{stage.lower()}'"
+        messages.append(Message("assistant", format_tool_call(sql)))
+        messages.append(Message("tool", json.dumps({"status": "success", "data": [{"criterion_name": "Retention", "weight": "critical"}]}, ensure_ascii=False)))
+        messages.append(Message("assistant", f"En tant que {profile}, le critère de Rétention est éliminatoire. Vérifiez les chiffres avant d'investir."))
+    else:
+        messages.append(Message("assistant", f"Verdict {profile} : Recommandation neutre. Le stade {stage} nécessite plus de preuves de traction."))
+        
+    return Example(messages=messages, metadata={"category": "evaluation_investissement", "sector": sector, "has_tool_use": tool_use, "investor_profile": profile})
 
-def generate_dataset(num_examples=3500): # 3500 pour assurer environ 1000+ par set selon la demande
-    """Génère un large dataset synthétique."""
-    examples = []
+def generate_simplification(idx, tool_use=False):
+    concepts = ["Pivot", "MVP", "Product-Market Fit", "Customer Discovery", "Vanity Metrics"]
+    concept = random.choice(concepts)
+    profile = random.choice(INVESTOR_PROFILES)
     
-    # Ratios: 35% diag, 25% danger, 25% invest, 15% simple
-    for i in range(int(num_examples * 0.35)):
-        examples.append(generate_diagnostic(i))
-        
-    for i in range(int(num_examples * 0.25)):
-        examples.append(generate_danger(i))
-        
-    for i in range(int(num_examples * 0.25)):
-        examples.append(generate_investment(i))
-        
-    for i in range(int(num_examples * 0.15)):
-        examples.append(generate_simplification(i))
-        
-    # Mélanger le dataset
-    random.seed(42)
-    random.shuffle(examples)
+    messages = [Message("system", SYSTEM_PROMPT_WITH_TOOLS if tool_use else SYSTEM_PROMPT_NO_TOOLS)]
+    messages.append(Message("user", f"Explique moi '{concept}' simplement. Je suis {profile}."))
     
-    return examples
+    if tool_use:
+        sql = f"SELECT simple_def, analogy FROM lean_concepts WHERE concept_name ILIKE '%{concept}%'"
+        messages.append(Message("assistant", format_tool_call(sql)))
+        messages.append(Message("tool", json.dumps({"status": "success", "data": [{"simple_def": "Def", "analogy": "Analog"}]}, ensure_ascii=False)))
+        messages.append(Message("assistant", f"Le concept de {concept} c'est comme... [Analog]. En gros : Def."))
+    else:
+        messages.append(Message("assistant", f"**{concept}** : C'est comme tester l'eau avant de plonger."))
+        
+    return Example(messages=messages, metadata={"category": "simplification_concept", "has_tool_use": tool_use, "investor_profile": profile, "sector": "universal"})
+
+# =============================================================================
+# MAIN LOGIC
+# =============================================================================
 
 def main():
-    root = Path(__file__).parent.parent.parent
-    data_dir = root / "data"
-    source_dir = data_dir / "source"
-    splits_dir = data_dir / "splits"
-    liquid_dir = data_dir / "liquid"
+    logger.info("Génération du Master Dataset SFT...")
+    random.seed(RANDOM_SEED)
     
-    for d in [source_dir, splits_dir, liquid_dir]:
-        d.mkdir(parents=True, exist_ok=True)
-        
-    print("Génération du dataset enrichi en cours...")
-    # Génère 4000 exemples pour être large
-    examples = generate_dataset(4000)
+    examples = []
+    counts = {
+        "diagnostic_complet": int(TOTAL_EXAMPLES * 0.35),
+        "identification_des_dangers": int(TOTAL_EXAMPLES * 0.25),
+        "evaluation_investissement": int(TOTAL_EXAMPLES * 0.25),
+        "simplification_concept": int(TOTAL_EXAMPLES * 0.15)
+    }
     
-    # Save source
-    full_path = source_dir / "full_dataset.jsonl"
-    with open(full_path, "w", encoding="utf-8") as f:
-        for ex in examples:
-            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
+    generators = {
+        "diagnostic_complet": generate_diagnostic,
+        "identification_des_dangers": generate_danger,
+        "evaluation_investissement": generate_investment,
+        "simplification_concept": generate_simplification
+    }
+    
+    for cat, count in counts.items():
+        for i in range(count):
+            tool_use = random.random() < TOOL_USE_RATIO
+            examples.append(generators[cat](i, tool_use))
             
-    # L'utilisateur a demandé au moins 1000 lignes pour train, eval, test.
-    # On a 4000 lignes, on peut faire un split 2000 train / 1000 eval / 1000 test
-    # 50% train, 25% eval, 25% test
-    train_data, temp_data = train_test_split(examples, test_size=0.5, random_state=42)
-    val_data, test_data = train_test_split(temp_data, test_size=0.5, random_state=42)
+    random.shuffle(examples)
     
-    for name, data in [("train", train_data), ("eval", val_data), ("test", test_data)]:
-        path = splits_dir / f"{name}.jsonl"
+    # Save Full
+    OUTPUT_FULL.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_FULL, "w", encoding="utf-8") as f:
+        for ex in examples:
+            f.write(json.dumps(ex.to_dict(), ensure_ascii=False) + "\n")
+            
+    # Splits
+    train_ex, temp_ex = train_test_split(examples, test_size=0.2, random_state=RANDOM_SEED)
+    val_ex, test_ex = train_test_split(temp_ex, test_size=0.5, random_state=RANDOM_SEED)
+    
+    for name, data in [("train", train_ex), ("val", val_ex), ("test", test_ex)]:
+        path = OUTPUT_SPLITS / f"{name}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             for ex in data:
-                f.write(json.dumps(ex, ensure_ascii=False) + "\n")
+                f.write(json.dumps(ex.to_dict(), ensure_ascii=False) + "\n")
                 
-        # Format for Liquid (just the messages)
-        liquid_path = liquid_dir / f"liquid_{name}.jsonl"
-        with open(liquid_path, "w", encoding="utf-8") as f:
+    # Liquid format
+    OUTPUT_LIQUID.mkdir(parents=True, exist_ok=True)
+    for name, data in [("train", train_ex), ("val", val_ex)]:
+        path = OUTPUT_LIQUID / f"{name}_liquid.jsonl"
+        with open(path, "w", encoding="utf-8") as f:
             for ex in data:
-                f.write(json.dumps({"messages": ex["messages"]}, ensure_ascii=False) + "\n")
-                
-    print(f"Dataset construit avec succès !")
-    print(f"- Total: {len(examples)} exemples")
-    print(f"- Train: {len(train_data)} exemples")
-    print(f"- Eval : {len(val_data)} exemples")
-    print(f"- Test : {len(test_data)} exemples")
+                f.write(json.dumps({"messages": [m.__dict__ for m in ex.messages]}, ensure_ascii=False) + "\n")
+            
+    logger.info(f"Dataset construit : {len(examples)} exemples.")
+    logger.info(f"Splits: Train={len(train_ex)}, Val={len(val_ex)}, Test={len(test_ex)}")
 
 if __name__ == "__main__":
     main()

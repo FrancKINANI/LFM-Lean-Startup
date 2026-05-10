@@ -1,8 +1,8 @@
 # Configuration pour le fine-tuning LoRA de LiquidAI LFM2.5-350M
 
 model_id: "LiquidAI/LFM2.5-350M-Base"
-train_path: "data/liquid/liquid_train.jsonl"
-eval_path: "data/liquid/liquid_eval.jsonl"
+train_path: "data/liquid/train_liquid.jsonl"
+eval_path: "data/liquid/val_liquid.jsonl"
 output_dir: "artifacts/lfm25_350m_lean_startup"
 
 # Paramètres d'entraînement SFT (Supervised Fine-Tuning)

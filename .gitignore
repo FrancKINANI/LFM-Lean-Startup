@@ -1,1 +1,16 @@
 .dvc/config
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+logs/
+*.log
+.pytest_cache/
+.vscode/
+mlflow.db
+data/source/full_dataset.jsonl
+!data/source/.gitignore

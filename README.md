@@ -1,172 +1,287 @@
-# Analyste Lean Startup Augmenté (LFM-Lean-Startup)
+# LFM Lean Startup — Analyste IA pour Startups
 
-Ce projet implémente un analyste intelligent spécialisé dans la méthodologie **Lean Startup**, basé sur le modèle **LiquidAI LFM2.5-350M**. Il combine le fine-tuning supervisé (SFT) avec l'utilisation d'outils (Tool Use) pour interroger des bases de connaissances expertes.
-
-## 🎯 La Vision
-
-L'objectif est de construire un analyste capable de rendre accessible ce que les whitepapers techniques rendent opaque. Il ne s'adresse pas aux investisseurs institutionnels, mais aux entrepreneurs et décideurs qui ont besoin de comprendre rapidement et clairement la viabilité d'un projet.
-
-| ENTRÉE | SORTIE |
-| :--- | :--- |
-| **Informations sur une startup** | → **Évaluation de l'opportunité** d'investissement |
-| (stade, marché, équipe, modèle, traction...) | → **Identification des dangers** critiques (explication simple) |
-
-## 🏗️ Architecture Hybride : Local + Remote (Colab)
-
-Le projet est conçu pour fonctionner de manière hybride afin de pallier les limitations matérielles locales :
-
-1.  **ORCHESTRATION LOCALE (PC)** :
-    *   **Airflow & DVC** : Gestion du pipeline et versionnage des données.
-    *   **PostgreSQL** : Base de connaissances experte.
-    *   **MLflow** : Serveur de tracking centralisé pour les métriques.
-    *   **FastAPI** : Couche API pour l'interface utilisateur.
-
-2.  **EXÉCUTION DISTANTE (Google Colab / SSH)** :
-    *   **Fine-Tuning (SFT)** : Entraînement LoRA utilisant les GPUs T4/A100 de Colab.
-    *   **Inférence & Évaluation** : Test du modèle et génération de réponses complexes.
-    *   **Synchronisation** : Les poids du modèle et les logs MLflow sont renvoyés vers les serveurs locaux ou distants via SSH.
-
-
-## 📊 Structure du Dataset de Fine-tuning
-
-Le dataset est stocké au format **ChatML** (compatible LFM2.5) dans `data/source/full_dataset.jsonl`.
-
-### Les 4 catégories d'exemples
--   **Diagnostic complet (35%)** : Analyse structurée globale (forces, faiblesses, dangers).
--   **Identification des dangers (25%)** : Liste des risques expliqués simplement et classés par criticité.
--   **Évaluation d'investissement (25%)** : Recommandation go/no-go argumentée selon le profil investisseur.
--   **Simplification de concept (15%)** : Vulgarisation de concepts techniques Lean Startup sans jargon.
-
-### Exemple de Tool Use (Interrogation SQL)
-```json
-{
-  "messages": [
-    {
-      "role": "system",
-      "content": "Tu es un analyste Lean Startup expert... List of tools: [query_postgresql]"
-    },
-    {
-      "role": "user",
-      "content": "Startup de mise en relation artisans en Afrique. 120 inscrits, 8 transactions..."
-    },
-    {
-      "role": "assistant",
-      "content": "<|tool_call_start|>[query_postgresql(sql=\"SELECT ... FROM risk_patterns WHERE sector = 'marketplace'...\")]<|tool_call_end|>"
-    },
-    {
-      "role": "tool",
-      "content": "[{\"pattern_name\": \"Cold start problem\", \"criticality\": \"critical\"...}]"
-    },
-    {
-      "role": "assistant",
-      "content": "## Analyse... Signal d'alarme : le ratio offre/demande..."
-    }
-  ]
-}
-```
-
-## 🛠️ Stack Technique
-
--   **Modèle :** [LiquidAI LFM2.5-350M](https://liquid.ai/) (Architecture non-transformer ultra-performante).
--   **Base de données :** PostgreSQL (Vecteur de connaissances et patterns).
--   **Gestion de données :** DVC (Data Version Control).
--   **Orchestration :** Apache Airflow (DAGs de build, training et eval).
--   **Suivi :** MLflow (Tracking des expériences et registre de modèles).
--   **Fine-tuning & Inférence (Remote) :** Hugging Face `trl`, `peft` et `transformers` (LoRA).
--   **Connectivité :** SSH Tunneling (Colab ↔ Local).
-
-## 📁 Structure du Projet
-
-```text
-├── configs/            # Configurations d'entraînement et d'inférence
-├── dags/               # Pipelines Airflow (build_dataset, fine_tuning, evaluation)
-├── data/               # Données (liquid, source, splits) - Géré par DVC
-├── database/           # Schéma SQL, migrations et seeds (patterns de risque, etc.)
-├── mlflow_configs/     # Configurations du serveur MLflow
-├── notebooks/          # Exploration et prototypes (fine-tuning, inférence)
-├── src/                # Code source (api, data, database, inference)
-├── tests/              # Tests unitaires et d'intégration
-├── docker-compose.yml  # Services (Airflow, Postgres, MLflow)
-├── requirements.txt    # Dépendances Python
-└── dvc.yaml            # Définition des étapes du pipeline DVC
-```
-
-## 🚀 Installation & Démarrage
-
-1.  **Installation des dépendances :**
-    ```bash
-    source venv/bin/activate
-    pip install -r requirements.txt
-    ```
-
-2.  **Lancement des services (Postgres, MLflow, Airflow) :**
-    ```bash
-    docker-compose up -d
-    ```
-
-## ☁️ Configuration Google Colab (Remote)
-
-Pour préparer votre environnement Colab avant l'entraînement ou l'inférence :
-
-1.  **Connexion SSH** (ou ouverture d'un Notebook).
-2.  **Exécution du script de setup** :
-    ```bash
-    !bash scripts/setup_colab.sh
-    ```
-    *Ce script installera `torch`, `transformers`, `peft` et toutes les dépendances nécessaires au GPU.*
-
-3.  **Peuplement de la base de données & Data :**
-    ```bash
-    # Initialisation de la DB (schémas et seeds)
-    python src/database/seeds_runner.py
-    
-    # Récupération des données versionnées
-    dvc pull
-    ```
-
-## 🔄 Cycle de Vie MLOps (Pipeline DVC)
-
-Le projet utilise **DVC** pour orchestrer tout le pipeline. Pour reproduire l'intégralité du cycle (génération → metrics → training → evaluation) :
-
-```bash
-dvc repro
-```
-
-### Détail des étapes :
-*   `build_datasets` (Local) : Génère 4000 exemples synthétiques au format ChatML.
-*   `report_metrics` (Local) : Analyse la distribution et la qualité du dataset.
-*   `train_model` (Colab) : Lance le fine-tuning LoRA sur le modèle Liquid LFM via SSH.
-*   `evaluate_model` (Colab) : Évalue le modèle et logue les résultats dans le MLflow local via tunnel SSH.
-
-## 🌐 Utilisation de l'API (FastAPI)
-
-Pour exposer l'analyste en tant que service :
-
-```bash
-# Démarrage du serveur
-python src/api/main.py
-```
-
-**Endpoint principal :** `POST /analyze`
-```json
-{
-  "query": "Analyse le risque d'une marketplace de services B2B avec 5% de rétention."
-}
-```
-
-## 🧪 Tests & Qualité
-
-La robustesse du code et du parsing des outils est assurée par `pytest` :
-
-```bash
-PYTHONPATH=. pytest tests/ -v
-```
-
-## 📈 Monitoring (MLflow)
-
-Toutes les expériences, métriques d'entraînement et rapports d'évaluation sont accessibles sur l'interface MLflow :
-*   **URL :** `http://localhost:5000`
-*   **Expériences :** `LFM-Lean-Startup-SFT` et `LFM-Lean-Startup-Evaluation`.
+Fine-tuning de **LFM2.5-350M** (LiquidAI) pour analyser des startups en langage naturel, identifier les risques critiques et évaluer les opportunités d'investissement — en rendant accessible ce que les whitepapers rendent opaque.
 
 ---
-*Développé pour transformer la théorie du Lean Startup en outils d'aide à la décision actionnables.*
+
+## Ce que fait ce projet
+
+Un utilisateur décrit sa startup en texte libre. Le modèle :
+
+1. **Identifie les risques critiques** (Cold Start Problem, churn élevé, unit economics négatifs...)
+2. **Évalue l'opportunité d'investissement** selon le profil (angel, VC, impact, entrepreneur)
+3. **Explique simplement** les concepts Lean Startup tirés de whitepapers techniques
+4. **S'appuie sur des données réelles** via des tool calls PostgreSQL (benchmarks sectoriels, cas similaires, patterns de risque)
+
+```
+Utilisateur → texte libre
+      ↓
+LFM2.5-350M fine-tuné (LoRA-SFT)
+      ↓
+Tool call PostgreSQL (benchmarks, risques, cas similaires)
+      ↓
+Réponse claire, structurée, adaptée à l'interlocuteur
+```
+
+---
+
+## Stack technique
+
+| Couche | Technologie |
+|---|---|
+| Modèle de base | LiquidAI LFM2.5-350M-Base |
+| Fine-tuning | LoRA + TRL SFTTrainer |
+| Versioning données | DVC + Google Drive |
+| Tracking expériences | MLflow |
+| Orchestration | Apache Airflow |
+| Base de données | PostgreSQL |
+| API | FastAPI |
+| Infrastructure locale | Docker Compose |
+
+---
+
+## Démarrage rapide
+
+### Prérequis
+
+- Python 3.11+
+- Docker & Docker Compose
+- GPU avec ≥ 16 Go VRAM (pour le fine-tuning)
+- Compte Google Drive (pour le remote DVC)
+
+### 1. Cloner et configurer l'environnement
+
+```bash
+git clone https://github.com/FrancKINANI/LFM-Lean-Startup.git
+cd LFM-Lean-Startup
+
+python -m venv .venv
+source .venv/bin/activate        # Linux/Mac
+# .venv\Scripts\activate         # Windows
+
+pip install -r requirements.txt
+```
+
+### 2. Configurer les variables d'environnement
+
+```bash
+cp .env.example .env
+# Éditer .env avec vos valeurs (PostgreSQL, MLflow, etc.)
+```
+
+### 3. Lancer l'infrastructure locale
+
+```bash
+# PostgreSQL + MLflow + Airflow
+docker-compose up -d postgres mlflow
+
+# Initialiser Airflow (une seule fois)
+docker-compose up airflow-init
+
+# Lancer Airflow
+docker-compose up -d airflow-webserver airflow-scheduler
+```
+
+Services disponibles :
+- **Airflow UI** : http://localhost:8080 (admin/admin)
+- **MLflow UI** : http://localhost:5000
+- **PostgreSQL** : localhost:5433
+
+### 4. Initialiser la base de données
+
+```bash
+# Le schéma et les seeds s'exécutent automatiquement au premier démarrage de PostgreSQL
+# Vérifier :
+psql -h localhost -U postgres -d lfm_lean_startup -c "\dt"
+```
+
+### 5. Configurer DVC avec Google Drive
+
+```bash
+dvc remote add -d gdrive gdrive://<VOTRE_FOLDER_ID>
+dvc remote modify gdrive gdrive_use_service_account false
+```
+
+---
+
+## Pipeline MLOps complet
+
+Le pipeline est orchestré par trois DAGs Airflow, à exécuter dans l'ordre :
+
+### DAG 1 — Construction du dataset
+
+```
+Airflow UI → DAGs → lfm_build_dataset → Trigger DAG
+```
+
+Ou en direct :
+```bash
+python src/data/build_lean_datasets.py
+python src/data/report_dataset_metrics.py
+```
+
+Produit :
+- `data/source/full_dataset.jsonl` — dataset canonique
+- `data/splits/` — train / val / test
+- `data/liquid/` — format TRL
+- `DATASET_METRICS_REPORT.md` — rapport de qualité
+
+### DAG 2 — Fine-tuning
+
+```
+Airflow UI → DAGs → lfm_fine_tuning → Trigger DAG
+```
+
+Ou en direct :
+```bash
+python src/training/trainer.py
+```
+
+Produit :
+- `models/lfm25-350m-lean/` — modèle fine-tuné
+- Run MLflow avec toutes les métriques et artefacts
+- Modèle enregistré dans le Registry au stade **Staging**
+
+### DAG 3 — Évaluation et promotion
+
+```
+Airflow UI → DAGs → lfm_evaluation → Trigger DAG
+```
+
+Évalue le modèle Staging et le promeut vers **Production** si :
+- Pas de régression vs la version précédente (delta eval_loss < 10%)
+- Tool call accuracy ≥ 70%
+
+---
+
+## Utilisation de l'API
+
+### Démarrer l'API (après fine-tuning)
+
+```bash
+# Avec le modèle disponible
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+# Documentation interactive
+open http://localhost:8000/docs
+```
+
+### Analyser une startup
+
+```bash
+curl -X POST http://localhost:8000/api/v1/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Notre marketplace connecte 120 artisans à des particuliers en Afrique subsaharienne. 8 transactions en 2 mois. On cherche 50 000$.",
+    "investor_profile": "angel"
+  }'
+```
+
+### Consulter les risques d'un secteur
+
+```bash
+curl "http://localhost:8000/api/v1/risks?sector=marketplace&stage=pre-seed&criticality=critical"
+```
+
+### Évaluer une métrique
+
+```bash
+curl "http://localhost:8000/api/v1/evaluate?sector=saas&stage=seed&metric=churn_monthly&value=8.0"
+```
+
+---
+
+## Structure du projet
+
+```
+LFM-Lean-Startup/
+├── dags/                          # Airflow DAGs
+│   ├── build_dataset_dag.py
+│   ├── fine_tuning_dag.py
+│   └── evaluation_dag.py
+├── data/                          # Géré par DVC (ignoré par git)
+│   ├── source/full_dataset.jsonl
+│   ├── splits/
+│   └── liquid/
+├── database/
+│   ├── schema.sql                 # Schéma PostgreSQL (6 tables)
+│   └── seeds/                     # Données initiales
+├── src/
+│   ├── data/                      # Pipeline données (étapes DVC)
+│   ├── database/                  # Couche PostgreSQL
+│   ├── training/                  # Fine-tuning LoRA
+│   ├── inference/                 # Pipeline d'inférence + tool use
+│   └── api/                       # FastAPI
+├── tests/                         # Tests unitaires
+├── configs/                       # Configurations YAML
+├── docker-compose.yml
+├── dvc.yaml                       # Pipeline DVC
+└── .env.example                   # Template variables d'environnement
+```
+
+---
+
+## Tests
+
+```bash
+# Tous les tests (sans GPU ni base de données requise)
+pytest tests/ -v
+
+# Un fichier spécifique
+pytest tests/test_data_pipeline.py -v
+pytest tests/test_tool_executor.py -v
+pytest tests/test_inference.py -v
+
+# Avec couverture
+pytest tests/ --cov=src --cov-report=term-missing
+```
+
+---
+
+## Base de données PostgreSQL
+
+Six tables organisées en deux groupes :
+
+**Connaissance** (cas et patterns réels) :
+- `startups` — cas documentés de startups
+- `pivot_cases` — pivots avec contexte et résultats
+- `risk_patterns` — patterns de risque par secteur et stade
+
+**Référence** (calibrage et frameworks) :
+- `sector_benchmarks` — métriques de référence sectorielles
+- `lean_concepts` — concepts Lean Startup avec double explication
+- `investment_criteria` — critères d'évaluation par profil investisseur
+
+---
+
+## MLflow — Suivi des expériences
+
+```bash
+# Accéder à l'UI
+open http://localhost:5000
+
+# Lister les runs via CLI
+mlflow runs list --experiment-name "LFM-Lean-Startup-SFT"
+
+# Promouvoir manuellement un modèle
+python -c "
+import mlflow
+client = mlflow.tracking.MlflowClient('http://localhost:5000')
+client.transition_model_version_stage('lfm25-lean-startup', '1', 'Production')
+"
+```
+
+---
+
+## Contribuer
+
+1. Enrichir le dataset — ajouter des exemples dans `src/data/build_lean_datasets.py`
+2. Enrichir les seeds — ajouter des risques, benchmarks ou cas dans `database/seeds/`
+3. Lancer le DAG `lfm_build_dataset` pour valider
+4. Lancer `pytest tests/` pour vérifier la non-régression
+
+---
+
+## Auteur
+
+**Franc KINANI** — [GitHub](https://github.com/FrancKINANI)
