@@ -5,10 +5,11 @@ stages:
   # Input  : aucun (les exemples sont générés par le script)
   # Output : data/source/full_dataset.jsonl
   #          data/splits/train.jsonl, val.jsonl, test.jsonl
-  #          data/liquid/train_liquid.jsonl
+  #          data/liquid/train_liquid.jsonl, val_liquid.jsonl, test_liquid.jsonl
+  #          data/splits/hard_eval.jsonl, data/liquid/hard_eval_liquid.jsonl
   # ---------------------------------------------------------------------------
   build_datasets:
-    cmd: python src/data/build_lean_datasets.py
+    cmd: python3 src/data/build_lean_datasets.py
     deps:
       - src/data/build_lean_datasets.py
       - src/inference/tool_executor.py   # format des tool calls dans les exemples
@@ -17,15 +18,19 @@ stages:
       - data/splits/train.jsonl
       - data/splits/val.jsonl
       - data/splits/test.jsonl
+      - data/splits/hard_eval.jsonl
       - data/liquid/train_liquid.jsonl
+      - data/liquid/val_liquid.jsonl
+      - data/liquid/test_liquid.jsonl
+      - data/liquid/hard_eval_liquid.jsonl
 
   # ---------------------------------------------------------------------------
   # Étape 2 : Rapport de métriques du dataset
   # Input  : data/source/full_dataset.jsonl
-  # Output : DATASET_METRICS_REPORT.md (cache: false — toujours recalculé)
+  # Output : src/data/reports/metrics_lean.md (cache: false — toujours recalculé)
   # ---------------------------------------------------------------------------
   report_metrics:
-    cmd: python src/data/report_dataset_metrics.py
+    cmd: python3 src/data/report_dataset_metrics.py
     deps:
       - src/data/report_dataset_metrics.py
       - data/source/full_dataset.jsonl
@@ -35,19 +40,19 @@ stages:
 
   # ---------------------------------------------------------------------------
   # Étape 3 : Fine-tuning LoRA-SFT
-  # Input  : data/liquid/train_liquid.jsonl + data/splits/val.jsonl
+  # Input  : data/liquid/train_liquid.jsonl + data/liquid/val_liquid.jsonl
   # Output : models/lfm25-350m-lean/ (modèle fine-tuné + tokenizer)
   # Note   : cette étape est commentée par défaut — elle nécessite un GPU
   #          et est typiquement déclenchée par Airflow, pas dvc repro
   # ---------------------------------------------------------------------------
   # fine_tune:
-  #   cmd: python src/training/trainer.py
+  #   cmd: python3 src/training/trainer.py
   #   deps:
   #     - src/training/trainer.py
   #     - src/training/config.py
   #     - src/training/callbacks.py
   #     - data/liquid/train_liquid.jsonl
-  #     - data/splits/val.jsonl
+  #     - data/liquid/val_liquid.jsonl
   #   outs:
   #     - models/lfm25-350m-lean
   #   params:
@@ -55,13 +60,13 @@ stages:
   #         - training
   #         - lora
 
-  evaluate_model:
-    cmd: python src/inference/evaluate.py
-    deps:
-      - src/inference/evaluate.py
-      - configs/inference_config.yaml
-      - data/splits/test.jsonl
-      - models/lfm25-350m-lean
-    metrics:
-      - evaluation_report.json:
-          cache: false
+  # evaluate_model:
+  #   cmd: python3 src/inference/evaluate.py
+  #   deps:
+  #     - src/inference/evaluate.py
+  #     - configs/inference_config.yaml
+  #     - data/splits/test.jsonl
+  #     - models/lfm25-350m-lean
+  #   metrics:
+  #     - evaluation_report.json:
+  #         cache: false

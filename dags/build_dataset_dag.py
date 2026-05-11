@@ -221,7 +221,8 @@ def build_dataset_pipeline():
         metrics = module.compute_metrics(examples)
 
         report = module.render_report(metrics, full_dataset)
-        report_path = PROJECT_ROOT / "DATASET_METRICS_REPORT.md"
+        report_path = PROJECT_ROOT / "src" / "data" / "reports" / "metrics_lean.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report, encoding="utf-8")
 
         warnings = metrics.get("warnings", [])
@@ -250,8 +251,8 @@ def build_dataset_pipeline():
         Valide que le dataset est suffisamment équilibré et volumineux.
 
         Règles de validation :
-        - Minimum 20 exemples (seuil bas pour le développement)
-        - Pas plus de 3 avertissements bloquants
+        - Minimum 5000 exemples (objectif qualité du projet)
+        - Pas d'avertissement bloquant par défaut
         - Ratio tool use entre 20% et 85%
 
         Bloque le pipeline (AirflowFailException) si les critères ne sont pas atteints.
@@ -264,7 +265,7 @@ def build_dataset_pipeline():
         errors = []
 
         # Règle 1 : volume minimum
-        MIN_EXAMPLES = int(Variable.get("lfm_min_dataset_size", default_var=20))
+        MIN_EXAMPLES = int(Variable.get("lfm_min_dataset_size", default_var=5000))
         if total < MIN_EXAMPLES:
             errors.append(
                 f"Volume insuffisant : {total} exemples < {MIN_EXAMPLES} minimum. "
@@ -284,11 +285,11 @@ def build_dataset_pipeline():
             )
 
         # Règle 3 : avertissements bloquants
-        MAX_WARNINGS = int(Variable.get("lfm_max_warnings", default_var=3))
+        MAX_WARNINGS = int(Variable.get("lfm_max_warnings", default_var=0))
         if warning_count > MAX_WARNINGS:
             errors.append(
                 f"Trop d'avertissements : {warning_count} > {MAX_WARNINGS}. "
-                f"Vérifier DATASET_METRICS_REPORT.md."
+                f"Vérifier src/data/reports/metrics_lean.md."
             )
 
         if errors:

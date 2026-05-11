@@ -1,0 +1,9 @@
+# Dépendances pour Colab, VM GPU ou machine SSH distante.
+# L'environnement Docker local reste léger; ce fichier est uniquement pour le training.
+
+-r colab_requirements.txt
+
+mlflow
+dvc
+dvc-gdrive
+python-dotenv

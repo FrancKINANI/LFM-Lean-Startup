@@ -102,13 +102,13 @@ class TrainingConfig:
     # ------------------------------------------------------------------
     # CHEMINS
     # ------------------------------------------------------------------
-    base_model_id:   str = "liquid-ai/LFM2.5-350M-Base"
+    base_model_id:   str = "LiquidAI/LFM2.5-350M-Base"
     output_dir:      str = str(PROJECT_ROOT / "models" / "lfm25-350m-lean")
     logging_dir:     str = str(PROJECT_ROOT / "models" / "logs")
 
     # Données
     train_file:      str = str(PROJECT_ROOT / "data" / "liquid" / "train_liquid.jsonl")
-    val_file:        str = str(PROJECT_ROOT / "data" / "splits" / "val.jsonl")
+    val_file:        str = str(PROJECT_ROOT / "data" / "liquid" / "val_liquid.jsonl")
     dataset_field:   str = "text"   # champ utilisé par SFTTrainer
 
     # ------------------------------------------------------------------

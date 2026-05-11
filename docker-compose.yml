@@ -1,5 +1,3 @@
-version: "3.9"
-
 # =============================================================================
 # LFM Lean Startup — Stack de développement local
 # =============================================================================
@@ -29,6 +27,47 @@ volumes:
   airflow_plugins:
 
 # -----------------------------------------------------------------------------
+# Airflow — base commune pour webserver, scheduler et init
+# -----------------------------------------------------------------------------
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  image: lfm-airflow:local
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR:                   LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:       postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-lfm_lean_startup}
+    AIRFLOW__CORE__FERNET_KEY:                 ${AIRFLOW_FERNET_KEY:-""}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES:              "false"
+    AIRFLOW__API__AUTH_BACKENDS:               airflow.api.auth.backend.basic_auth
+    # Variables d'environnement transmises aux DAGs
+    POSTGRES_HOST:     postgres
+    POSTGRES_PORT:     5432
+    POSTGRES_DB:       ${POSTGRES_DB:-lfm_lean_startup}
+    POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    PUBLIC_MLFLOW_TRACKING_URI: ${PUBLIC_MLFLOW_TRACKING_URI:-}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data
+    - ./configs:/opt/airflow/configs
+    - ./scripts:/opt/airflow/scripts
+    - ./.ssh:/opt/airflow/.ssh:ro
+    - airflow_logs:/opt/airflow/logs
+    - airflow_plugins:/opt/airflow/plugins
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - lfm-network
+
+# -----------------------------------------------------------------------------
 # SERVICES
 # -----------------------------------------------------------------------------
 
@@ -46,7 +85,7 @@ services:
       POSTGRES_USER:     ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Exécution automatique du schéma et des seeds au premier lancement
@@ -86,39 +125,6 @@ services:
         condition: service_healthy
     environment:
       MLFLOW_TRACKING_URI: http://localhost:5000
-    networks:
-      - lfm-network
-
-  # ---------------------------------------------------------------------------
-  # Airflow — orchestration du pipeline MLOps
-  # Base commune pour webserver et scheduler
-  # ---------------------------------------------------------------------------
-  x-airflow-common: &airflow-common
-    image: apache/airflow:2.9.1-python3.11
-    environment: &airflow-env
-      AIRFLOW__CORE__EXECUTOR:                   LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:       postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-lfm_lean_startup}
-      AIRFLOW__CORE__FERNET_KEY:                 ${AIRFLOW_FERNET_KEY:-""}
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-      AIRFLOW__CORE__LOAD_EXAMPLES:              "false"
-      AIRFLOW__API__AUTH_BACKENDS:               airflow.api.auth.backend.basic_auth
-      # Variables d'environnement transmises aux DAGs
-      POSTGRES_HOST:     postgres
-      POSTGRES_PORT:     5432
-      POSTGRES_DB:       ${POSTGRES_DB:-lfm_lean_startup}
-      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
-      MLFLOW_TRACKING_URI: http://mlflow:5000
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./data:/opt/airflow/data
-      - ./configs:/opt/airflow/configs
-      - airflow_logs:/opt/airflow/logs
-      - airflow_plugins:/opt/airflow/plugins
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - lfm-network
 

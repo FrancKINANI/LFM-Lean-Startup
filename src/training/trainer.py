@@ -128,6 +128,8 @@ def _run_training(
             "method":       "LoRA-SFT",
             "task":         "lean_startup_analysis",
             "framework":    "TRL+PEFT",
+            "execution_target": os.getenv("LFM_EXECUTION_TARGET", "local"),
+            "airflow_run_token": os.getenv("LFM_AIRFLOW_RUN_TOKEN", ""),
         })
 
         logger.info("Hyperparamètres loggés dans MLflow.")
@@ -244,7 +246,7 @@ def _run_training(
         # 8. CALLBACKS MLFLOW
         # =====================================================================
 
-        dataset_report = str(PROJECT_ROOT / "DATASET_METRICS_REPORT.md")
+        dataset_report = str(PROJECT_ROOT / "src" / "data" / "reports" / "metrics_lean.md")
         config_dict = {
             "training": training_cfg.log_params_dict(),
             "lora": {

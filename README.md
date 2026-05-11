@@ -55,12 +55,25 @@ Réponse claire, structurée, adaptée à l'interlocuteur
 git clone https://github.com/FrancKINANI/LFM-Lean-Startup.git
 cd LFM-Lean-Startup
 
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate        # Linux/Mac
 # .venv\Scripts\activate         # Windows
 
 pip install -r requirements.txt
 ```
+
+`requirements.txt` installe l'environnement local léger : Airflow, DVC,
+MLflow, API, PostgreSQL client, génération de dataset et tests. Les dépendances
+GPU du fine-tuning ne sont pas installées ici.
+
+Pour entraîner sur Colab, une VM GPU ou une machine accessible en SSH :
+
+```bash
+pip install -r scripts/colab_requirements.txt
+```
+
+Ce fichier contient les dépendances lourdes : `torch`, `transformers`, `trl`,
+`peft`, `accelerate`, `datasets`, `bitsandbytes`.
 
 ### 2. Configurer les variables d'environnement
 
@@ -72,7 +85,7 @@ cp .env.example .env
 ### 3. Lancer l'infrastructure locale
 
 ```bash
-# PostgreSQL + MLflow + Airflow
+# PostgreSQL + MLflow
 docker-compose up -d postgres mlflow
 
 # Initialiser Airflow (une seule fois)
@@ -85,7 +98,7 @@ docker-compose up -d airflow-webserver airflow-scheduler
 Services disponibles :
 - **Airflow UI** : http://localhost:8080 (admin/admin)
 - **MLflow UI** : http://localhost:5000
-- **PostgreSQL** : localhost:5433
+- **PostgreSQL** : localhost:5433 côté machine hôte, `postgres:5432` côté containers
 
 ### 4. Initialiser la base de données
 
@@ -116,15 +129,19 @@ Airflow UI → DAGs → lfm_build_dataset → Trigger DAG
 
 Ou en direct :
 ```bash
-python src/data/build_lean_datasets.py
-python src/data/report_dataset_metrics.py
+python3 src/data/build_lean_datasets.py
+python3 src/data/report_dataset_metrics.py
 ```
 
 Produit :
-- `data/source/full_dataset.jsonl` — dataset canonique
-- `data/splits/` — train / val / test
-- `data/liquid/` — format TRL
-- `DATASET_METRICS_REPORT.md` — rapport de qualité
+- `data/source/full_dataset.jsonl` — dataset canonique auditable (`messages` + `metadata`)
+- `data/splits/` — train / val / test + `hard_eval`
+- `data/liquid/` — format TRL avec champ `text`
+- `src/data/reports/metrics_lean.md` — rapport de qualité
+
+Chaque exemple contient les métadonnées de supervision `Label`, `Severity` et
+`Difficulty` pour entraîner le modèle à distinguer les green flags, red flags et
+cas mixtes, puis à prioriser les risques.
 
 ### DAG 2 — Fine-tuning
 
@@ -134,8 +151,36 @@ Airflow UI → DAGs → lfm_fine_tuning → Trigger DAG
 
 Ou en direct :
 ```bash
-python src/training/trainer.py
+python3 src/training/trainer.py
 ```
+
+En pratique, le fine-tuning est prévu pour tourner sur une machine GPU externe
+(Colab via ngrok/SSH, VM cloud ou workstation distante). Le Docker local garde
+le rôle d'orchestrateur et d'observabilité : Airflow déclenche, DVC fournit les
+données versionnées, MLflow reçoit les métriques et artefacts.
+
+Configuration Airflow minimale pour un entraînement distant :
+
+```bash
+# Dans l'UI Airflow : Admin → Variables
+lfm_remote_ssh_host=0.tcp.ngrok.io
+lfm_remote_ssh_port=12345
+lfm_remote_ssh_user=root
+lfm_remote_ssh_key_path=/opt/airflow/.ssh/id_rsa
+lfm_remote_project_dir=/content/LFM-Lean-Startup-Project
+lfm_remote_mlflow_tracking_uri=https://<votre-url-ngrok-mlflow>
+```
+
+Le DAG `lfm_fine_tuning` exécute ensuite à distance :
+
+```bash
+pip install -r scripts/remote_training_requirements.txt
+dvc pull data/liquid/train_liquid.jsonl data/liquid/val_liquid.jsonl data/splits/test.jsonl
+python3 src/training/trainer.py
+```
+
+La machine distante doit pouvoir accéder à MLflow. Pour Colab, exposer MLflow
+local avec ngrok, puis utiliser cette URL dans `lfm_remote_mlflow_tracking_uri`.
 
 Produit :
 - `models/lfm25-350m-lean/` — modèle fine-tuné

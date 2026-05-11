@@ -1,43 +1,27 @@
 """
 dags/fine_tuning_dag.py
 ========================
-DAG Airflow : Fine-tuning LoRA-SFT de LFM2.5-350M.
+Airflow DAG that orchestrates remote GPU fine-tuning.
 
-Déclenchement :
-    - Manuel uniquement (schedule=None)
-    - Typiquement déclenché après validation du dataset par build_dataset_dag
+Local Docker services keep the control plane:
+- Airflow triggers and monitors the job.
+- DVC versions and distributes datasets.
+- MLflow receives metrics and artifacts.
+- PostgreSQL remains the local knowledge database.
 
-Ce DAG est conçu pour être exécuté sur une machine avec GPU.
-En production, utiliser KubernetesExecutor avec un node GPU, ou
-configurer un worker Celery sur une machine GPU dédiée.
-
-Flux des tâches :
-    check_prerequisites
-            ↓
-    pull_dataset_from_dvc
-            ↓
-    run_fine_tuning          (src/training/trainer.py — long running)
-            ↓
-    evaluate_fine_tuned_model
-            ↓
-    ┌───────┴────────┐
-    │                │
-promote_to_staging  log_training_summary
-    │                │
-    └───────┬────────┘
-            ↓
-    notify_completion
-
-XCom utilisés :
-    run_fine_tuning          → evaluate_fine_tuned_model : run_id MLflow
-    evaluate_fine_tuned_model → promote_to_staging : eval_loss, perplexité
-    promote_to_staging       → notify_completion   : version du modèle
+The actual LoRA/SFT training runs on a GPU machine reachable over SSH
+(Colab through ngrok, a cloud VM, or a workstation).
 """
 
-import json
+from __future__ import annotations
+
 import logging
+import os
+import shlex
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from airflow.decorators import dag, task
 from airflow.exceptions import AirflowFailException
@@ -45,265 +29,240 @@ from airflow.models import Variable
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.trigger_rule import TriggerRule
 
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path("/opt/airflow")
+MAX_ACCEPTABLE_EVAL_LOSS = 2.5
 
 DEFAULT_ARGS = {
-    "owner":            "lfm-team",
-    "retries":          0,          # pas de retry sur le fine-tuning (coûteux)
-    "execution_timeout": timedelta(hours=6),  # le training peut prendre plusieurs heures
+    "owner": "lfm-team",
+    "retries": 0,
+    "execution_timeout": timedelta(hours=8),
     "email_on_failure": False,
 }
 
-# Seuil de qualité : eval_loss maximum acceptable pour promouvoir le modèle
-MAX_ACCEPTABLE_EVAL_LOSS = 2.5
+
+def _required_variable(name: str, help_text: str) -> str:
+    value = Variable.get(name, default_var="").strip()
+    if not value:
+        raise AirflowFailException(
+            f"Variable Airflow manquante: {name}. {help_text}"
+        )
+    return value
 
 
 @dag(
     dag_id="lfm_fine_tuning",
     description=(
-        "Fine-tuning LoRA-SFT de LFM2.5-350M sur le dataset Lean Startup. "
-        "Nécessite un GPU. Déclencher manuellement après validation du dataset."
+        "Déclenche le fine-tuning LoRA-SFT sur une machine GPU distante "
+        "et suit le run dans MLflow Docker."
     ),
     schedule=None,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
-    tags=["training", "mlflow", "lora", "lean-startup"],
+    tags=["training", "remote-gpu", "mlflow", "lora", "lean-startup"],
     doc_md="""
-## DAG : Fine-tuning LFM2.5-350M
+## DAG : Fine-tuning distant LFM2.5-350M
 
-Lance le fine-tuning LoRA-SFT et enregistre le modèle dans MLflow.
+Ce DAG ne lance pas `torch` dans Docker local. Il orchestre un entraînement sur
+une machine GPU distante via SSH, puis lit les métriques dans MLflow.
 
-**Prérequis :**
-- GPU disponible avec ≥ 16 Go VRAM
-- Dataset généré et validé (lancer `lfm_build_dataset` en premier)
-- MLflow accessible (http://localhost:5000)
+### Services locaux Docker
+- Airflow : `http://localhost:8080`
+- MLflow : `http://localhost:5000`
+- PostgreSQL : `localhost:5433` côté host, `postgres:5432` côté containers
 
-**Résultat :**
-- Modèle sauvegardé dans `models/lfm25-350m-lean/`
-- Version enregistrée dans le MLflow Model Registry au stade **Staging**
-- Métriques visibles dans l'UI MLflow
+### Variables Airflow obligatoires
+- `lfm_remote_ssh_host` : host SSH distant ou host ngrok
+- `lfm_remote_ssh_user` : utilisateur SSH distant
+- `lfm_remote_mlflow_tracking_uri` : URI MLflow accessible depuis la machine distante
 
-**Configuration (Variables Airflow) :**
-- `lfm_max_eval_loss` : eval_loss maximum pour promotion (défaut: 2.5)
-- `lfm_lora_rank` : rang LoRA (défaut: 16)
-- `lfm_num_epochs` : nombre d'epochs (défaut: 3)
+### Variables Airflow optionnelles
+- `lfm_remote_ssh_port` : port SSH, défaut `22`
+- `lfm_remote_ssh_key_path` : clé privée dans le container Airflow, défaut `/opt/airflow/.ssh/id_rsa`
+- `lfm_remote_project_dir` : dossier projet sur la machine distante
+- `lfm_remote_setup_command` : commande d'installation distante
+- `lfm_remote_dvc_pull_command` : commande DVC distante
+- `lfm_remote_train_command` : commande d'entraînement distante
     """,
 )
 def fine_tuning_pipeline():
-
-    # =========================================================================
-    # TÂCHE 1 — Vérification des prérequis
-    # =========================================================================
-
-    @task(task_id="check_prerequisites")
-    def check_prerequisites() -> dict:
-        """
-        Vérifie que toutes les conditions sont réunies avant de lancer
-        un entraînement coûteux :
-        - Dataset disponible et non vide
-        - GPU détecté
-        - MLflow accessible
-        - Connexion PostgreSQL OK
-        """
+    @task(task_id="check_local_services")
+    def check_local_services() -> dict:
+        """Check local Docker-side prerequisites before spending GPU time."""
         import sys
+
         sys.path.insert(0, str(PROJECT_ROOT))
 
-        results = {}
-
-        # 1. Dataset
         train_file = PROJECT_ROOT / "data" / "liquid" / "train_liquid.jsonl"
-        if not train_file.exists():
-            raise AirflowFailException(
-                f"Dataset manquant : {train_file}\n"
-                "Lancer d'abord le DAG 'lfm_build_dataset'."
-            )
-
-        train_size = sum(1 for _ in open(train_file, encoding="utf-8"))
-        if train_size < 10:
-            raise AirflowFailException(
-                f"Dataset trop petit : {train_size} exemples. "
-                "Enrichir les générateurs."
-            )
-
-        results["train_size"] = train_size
-        logger.info("Dataset train : %d exemples ✓", train_size)
-
-        # 2. GPU
-        try:
-            import torch
-            gpu_available = torch.cuda.is_available()
-            gpu_name = torch.cuda.get_device_name(0) if gpu_available else "N/A"
-            gpu_memory = (
-                torch.cuda.get_device_properties(0).total_memory // (1024**3)
-                if gpu_available else 0
-            )
-            results["gpu"] = {
-                "available": gpu_available,
-                "name": gpu_name,
-                "memory_gb": gpu_memory,
-            }
-            if not gpu_available:
-                logger.warning(
-                    "Aucun GPU détecté — le fine-tuning sur CPU est très lent. "
-                    "Continuer quand même (utile pour tests)."
+        val_file = PROJECT_ROOT / "data" / "liquid" / "val_liquid.jsonl"
+        for dataset_file in [train_file, val_file]:
+            if not dataset_file.exists():
+                raise AirflowFailException(
+                    f"Dataset manquant: {dataset_file}. Lancer `lfm_build_dataset` d'abord."
                 )
-            else:
-                logger.info("GPU : %s (%d Go) ✓", gpu_name, gpu_memory)
-        except ImportError:
-            results["gpu"] = {"available": False, "name": "torch non installé"}
-            logger.warning("torch non disponible — vérifier l'installation.")
 
-        # 3. MLflow
+        train_size = sum(1 for _ in train_file.open(encoding="utf-8"))
+        if train_size < 5000 * 0.75:
+            raise AirflowFailException(
+                f"Train set trop petit: {train_size}. Régénérer le dataset."
+            )
+
         try:
             import mlflow
             from src.training.config import TrainingConfig
+
             cfg = TrainingConfig()
             mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
             client = mlflow.tracking.MlflowClient()
-            # Test léger : lister les experiments
             client.search_experiments()
-            results["mlflow"] = "ok"
-            logger.info("MLflow accessible : %s ✓", cfg.mlflow_tracking_uri)
-        except Exception as e:
-            raise AirflowFailException(f"MLflow inaccessible : {e}")
+            mlflow_status = cfg.mlflow_tracking_uri
+        except Exception as exc:
+            raise AirflowFailException(f"MLflow Docker inaccessible: {exc}") from exc
 
-        # 4. PostgreSQL
-        from src.database.client import health_check
-        health = health_check()
-        if health["status"] != "ok":
-            raise AirflowFailException(f"PostgreSQL inaccessible : {health.get('message')}")
-        results["postgres"] = "ok"
-        logger.info("PostgreSQL ✓")
+        try:
+            from src.database.client import health_check
 
-        return results
-
-    # =========================================================================
-    # TÂCHE 2 — Pull DVC
-    # =========================================================================
-
-    @task(task_id="pull_dataset_from_dvc")
-    def pull_dataset_from_dvc() -> str:
-        """
-        Récupère la dernière version du dataset depuis le remote DVC.
-        Garantit que le training utilise les données versionnées, pas
-        des données locales potentiellement modifiées.
-        """
-        import subprocess
-
-        result = subprocess.run(
-            ["dvc", "pull", "data/liquid/train_liquid.jsonl", "data/splits/val.jsonl"],
-            capture_output=True,
-            text=True,
-            cwd=str(PROJECT_ROOT),
-        )
-
-        if result.returncode != 0:
-            # Ne pas bloquer si le pull échoue (fichiers déjà présents localement)
-            logger.warning(
-                "dvc pull warning (non bloquant) : %s", result.stderr
-            )
-            return "dvc pull partiel — utilisation des fichiers locaux existants"
-
-        logger.info("dvc pull terminé : %s", result.stdout.strip() or "données à jour")
-        return "dvc pull réussi"
-
-    # =========================================================================
-    # TÂCHE 3 — Fine-tuning (tâche longue)
-    # =========================================================================
-
-    @task(
-        task_id="run_fine_tuning",
-        execution_timeout=timedelta(hours=5),
-    )
-    def run_fine_tuning(prerequisites: dict) -> dict:
-        """
-        Lance le fine-tuning LoRA-SFT via trainer.py.
-
-        Les hyperparamètres peuvent être surchargés via les Variables Airflow :
-            - lfm_lora_rank    : rang LoRA (défaut: 16)
-            - lfm_num_epochs   : nombre d'epochs (défaut: 3)
-            - lfm_learning_rate: learning rate (défaut: 2e-4)
-
-        Retourne le run_id MLflow pour les tâches suivantes.
-        """
-        import sys
-        sys.path.insert(0, str(PROJECT_ROOT))
-
-        from src.training.config import LoraConfig, TrainingConfig
-
-        # Surcharge via Variables Airflow (si définies dans l'UI)
-        training_cfg = TrainingConfig(
-            num_train_epochs=int(Variable.get("lfm_num_epochs", default_var=3)),
-            learning_rate=float(Variable.get("lfm_learning_rate", default_var=2e-4)),
-        )
-        lora_cfg = LoraConfig(
-            r=int(Variable.get("lfm_lora_rank", default_var=16)),
-        )
-        lora_cfg.lora_alpha = lora_cfg.r * 2  # convention : alpha = 2 × r
+            health = health_check()
+            if health["status"] != "ok":
+                raise AirflowFailException(
+                    f"PostgreSQL Docker inaccessible: {health.get('message')}"
+                )
+        except Exception as exc:
+            raise AirflowFailException(f"PostgreSQL Docker inaccessible: {exc}") from exc
 
         logger.info(
-            "Démarrage du fine-tuning — epochs: %d | lr: %.2e | lora_r: %d",
-            training_cfg.num_train_epochs,
-            training_cfg.learning_rate,
-            lora_cfg.r,
+            "Prérequis locaux OK — train=%d | MLflow=%s | PostgreSQL=ok",
+            train_size,
+            mlflow_status,
         )
-
-        # Capture du run_id MLflow avant le lancement
-        import mlflow
-        mlflow.set_tracking_uri(training_cfg.mlflow_tracking_uri)
-        mlflow.set_experiment(training_cfg.mlflow_experiment_name)
-
-        # Import du trainer
-        from src.training.trainer import _run_training
-        _run_training(training_cfg=training_cfg, lora_cfg=lora_cfg)
-
-        # Récupération du run_id du dernier run
-        client = mlflow.tracking.MlflowClient()
-        experiment = client.get_experiment_by_name(training_cfg.mlflow_experiment_name)
-        runs = client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            order_by=["start_time DESC"],
-            max_results=1,
-        )
-
-        if not runs:
-            raise AirflowFailException("Aucun run MLflow trouvé après entraînement.")
-
-        latest_run = runs[0]
-        run_id = latest_run.info.run_id
-        eval_loss = latest_run.data.metrics.get("final/eval_loss", 0)
-
-        logger.info(
-            "Fine-tuning terminé — Run ID: %s | Eval loss: %.4f",
-            run_id, eval_loss
-        )
-
         return {
-            "run_id":    run_id,
-            "eval_loss": eval_loss,
-            "model_uri": f"runs:/{run_id}/model",
+            "train_size": train_size,
+            "val_size": sum(1 for _ in val_file.open(encoding="utf-8")),
+            "mlflow_tracking_uri": mlflow_status,
         }
 
-    # =========================================================================
-    # TÂCHE 4 — Évaluation du modèle fine-tuné
-    # =========================================================================
+    @task(task_id="build_remote_training_command")
+    def build_remote_training_command(local_status: dict) -> dict:
+        """Build a safe SSH command from Airflow variables."""
+        del local_status
 
-    @task(task_id="evaluate_fine_tuned_model")
-    def evaluate_fine_tuned_model(training_result: dict) -> dict:
-        """
-        Évalue le modèle fine-tuné sur le test set et log les métriques
-        finales dans MLflow.
+        host = _required_variable(
+            "lfm_remote_ssh_host",
+            "Exemple ngrok: 0.tcp.ngrok.io",
+        )
+        user = Variable.get("lfm_remote_ssh_user", default_var="root").strip()
+        port = Variable.get("lfm_remote_ssh_port", default_var="22").strip()
+        key_path = Variable.get(
+            "lfm_remote_ssh_key_path",
+            default_var="/opt/airflow/.ssh/id_rsa",
+        ).strip()
+        project_dir = Variable.get(
+            "lfm_remote_project_dir",
+            default_var="~/LFM-Lean-Startup-Project",
+        ).strip()
+        mlflow_tracking_uri = Variable.get(
+            "lfm_remote_mlflow_tracking_uri",
+            default_var=os.getenv("PUBLIC_MLFLOW_TRACKING_URI", ""),
+        ).strip()
+        if not mlflow_tracking_uri:
+            raise AirflowFailException(
+                "Définir `lfm_remote_mlflow_tracking_uri` avec une URL accessible "
+                "depuis Colab/VM GPU, par exemple une URL ngrok vers MLflow."
+            )
 
-        Métriques calculées :
-        - eval_loss sur le test set (perplexité)
-        - Comparaison avec la baseline (modèle de base sans fine-tuning)
-        """
-        import math
+        if key_path and not Path(key_path).exists():
+            raise AirflowFailException(
+                f"Clé SSH introuvable dans le container Airflow: {key_path}. "
+                "Monter `./.ssh:/opt/airflow/.ssh:ro` ou modifier `lfm_remote_ssh_key_path`."
+            )
+
+        run_token = f"airflow-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
+        setup_command = Variable.get(
+            "lfm_remote_setup_command",
+            default_var="pip install -r scripts/remote_training_requirements.txt",
+        ).strip()
+        dvc_pull_command = Variable.get(
+            "lfm_remote_dvc_pull_command",
+            default_var=(
+                "dvc pull data/liquid/train_liquid.jsonl "
+                "data/liquid/val_liquid.jsonl data/splits/test.jsonl"
+            ),
+        ).strip()
+        train_command = Variable.get(
+            "lfm_remote_train_command",
+            default_var="python3 src/training/trainer.py",
+        ).strip()
+
+        exports = {
+            "MLFLOW_TRACKING_URI": mlflow_tracking_uri,
+            "LFM_AIRFLOW_RUN_TOKEN": run_token,
+            "LFM_EXECUTION_TARGET": "remote_ssh_gpu",
+            "PYTHONPATH": ".",
+        }
+        export_command = " ".join(
+            f"export {name}={shlex.quote(value)};" for name, value in exports.items()
+        )
+        remote_shell = (
+            "set -e; "
+            f"cd {shlex.quote(project_dir)}; "
+            f"{export_command} "
+            f"{setup_command}; "
+            f"{dvc_pull_command}; "
+            f"{train_command}"
+        )
+
+        ssh_command = ["ssh", "-p", str(port), "-o", "StrictHostKeyChecking=no"]
+        if key_path:
+            ssh_command.extend(["-i", key_path])
+        ssh_command.extend([f"{user}@{host}", remote_shell])
+
+        safe_command = shlex.join(
+            part if part != key_path else "<ssh-key>" for part in ssh_command
+        )
+        logger.info("Commande SSH préparée: %s", safe_command)
+        return {
+            "ssh_command": ssh_command,
+            "safe_command": safe_command,
+            "run_token": run_token,
+            "mlflow_tracking_uri": mlflow_tracking_uri,
+        }
+
+    @task(task_id="run_remote_fine_tuning", execution_timeout=timedelta(hours=7))
+    def run_remote_fine_tuning(remote_config: dict) -> dict:
+        """Run the remote command and stream logs into Airflow."""
+        logger.info("Lancement du training distant: %s", remote_config["safe_command"])
+        process = subprocess.Popen(
+            remote_config["ssh_command"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            logger.info("[remote] %s", line.rstrip())
+
+        return_code = process.wait()
+        if return_code != 0:
+            raise AirflowFailException(
+                f"Fine-tuning distant échoué avec code {return_code}."
+            )
+
+        logger.info("Fine-tuning distant terminé. Token run: %s", remote_config["run_token"])
+        return {
+            "run_token": remote_config["run_token"],
+            "mlflow_tracking_uri": remote_config["mlflow_tracking_uri"],
+        }
+
+    @task(task_id="collect_mlflow_metrics")
+    def collect_mlflow_metrics(training_result: dict) -> dict:
+        """Fetch the MLflow run produced by the remote trainer."""
         import sys
+
         sys.path.insert(0, str(PROJECT_ROOT))
 
         import mlflow
@@ -311,49 +270,55 @@ def fine_tuning_pipeline():
 
         cfg = TrainingConfig()
         mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
-        run_id = training_result["run_id"]
-
-        # Récupération des métriques du run de training
         client = mlflow.tracking.MlflowClient()
-        run = client.get_run(run_id)
-        metrics = run.data.metrics
+        experiment = client.get_experiment_by_name(cfg.mlflow_experiment_name)
+        if experiment is None:
+            raise AirflowFailException(
+                f"Experiment MLflow introuvable: {cfg.mlflow_experiment_name}"
+            )
 
-        eval_loss      = metrics.get("final/eval_loss",      training_result["eval_loss"])
-        eval_perplexity = metrics.get("final/eval_perplexity", math.exp(eval_loss) if eval_loss < 10 else 0)
-
-        # Log des métriques d'évaluation dans le run existant
-        with mlflow.start_run(run_id=run_id):
-            mlflow.log_metrics({
-                "test/eval_loss":       eval_loss,
-                "test/eval_perplexity": eval_perplexity,
-            })
-
-        logger.info(
-            "Évaluation finale — Loss: %.4f | Perplexité: %.2f",
-            eval_loss, eval_perplexity
+        run_token = training_result["run_token"]
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            filter_string=f"tags.airflow_run_token = '{run_token}'",
+            order_by=["start_time DESC"],
+            max_results=1,
         )
+        if not runs:
+            logger.warning(
+                "Aucun run trouvé avec airflow_run_token=%s. Fallback sur le dernier run.",
+                run_token,
+            )
+            runs = client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                order_by=["start_time DESC"],
+                max_results=1,
+            )
+        if not runs:
+            raise AirflowFailException("Aucun run MLflow trouvé après entraînement distant.")
 
+        run = runs[0]
+        eval_loss = run.data.metrics.get("final/eval_loss", 999.0)
+        eval_perplexity = run.data.metrics.get("final/eval_perplexity", 0.0)
+        logger.info(
+            "Run MLflow collecté — run_id=%s | eval_loss=%.4f | perplexity=%.2f",
+            run.info.run_id,
+            eval_loss,
+            eval_perplexity,
+        )
         return {
-            "run_id":          run_id,
-            "eval_loss":       eval_loss,
+            "run_id": run.info.run_id,
+            "run_token": run_token,
+            "eval_loss": eval_loss,
             "eval_perplexity": eval_perplexity,
             "passes_threshold": eval_loss < MAX_ACCEPTABLE_EVAL_LOSS,
         }
 
-    # =========================================================================
-    # TÂCHE 5A — Promotion vers Staging
-    # =========================================================================
-
     @task(task_id="promote_to_staging")
-    def promote_to_staging(evaluation_result: dict) -> dict:
-        """
-        Promeut le modèle vers le stade Staging dans le MLflow Model Registry
-        si les métriques d'évaluation sont acceptables.
-
-        Si la eval_loss dépasse le seuil configuré, bloque la promotion
-        et logue un avertissement.
-        """
+    def promote_to_staging(metrics: dict) -> dict:
+        """Promote the latest registered model version if metrics are acceptable."""
         import sys
+
         sys.path.insert(0, str(PROJECT_ROOT))
 
         import mlflow
@@ -363,177 +328,82 @@ def fine_tuning_pipeline():
         mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
         client = mlflow.tracking.MlflowClient()
 
-        eval_loss = evaluation_result["eval_loss"]
-        passes    = evaluation_result["passes_threshold"]
+        if not metrics["passes_threshold"]:
+            return {
+                "promoted": False,
+                "reason": (
+                    f"Eval loss {metrics['eval_loss']:.4f} dépasse le seuil "
+                    f"{MAX_ACCEPTABLE_EVAL_LOSS}."
+                ),
+            }
 
-        if not passes:
-            logger.warning(
-                "⚠ Eval loss %.4f > seuil %.4f — modèle NON promu vers Staging.",
-                eval_loss,
-                MAX_ACCEPTABLE_EVAL_LOSS,
+        versions = client.search_model_versions(f"name='{cfg.mlflow_model_name}'")
+        if not versions:
+            return {
+                "promoted": False,
+                "reason": "Aucune version du modèle trouvée dans MLflow Registry.",
+            }
+
+        latest_version = max(versions, key=lambda version: int(version.version))
+        if latest_version.current_stage not in ("Staging", "Production"):
+            client.transition_model_version_stage(
+                name=cfg.mlflow_model_name,
+                version=latest_version.version,
+                stage="Staging",
+                archive_existing_versions=False,
             )
-            return {
-                "promoted":    False,
-                "reason":      f"Eval loss {eval_loss:.4f} dépasse le seuil {MAX_ACCEPTABLE_EVAL_LOSS}",
-                "model_stage": "None",
-            }
 
-        # Recherche de la dernière version du modèle
-        try:
-            versions = client.search_model_versions(f"name='{cfg.mlflow_model_name}'")
-            if not versions:
-                logger.warning(
-                    "Aucune version du modèle '%s' trouvée dans le Registry. "
-                    "Le modèle a peut-être déjà été enregistré par le callback.",
-                    cfg.mlflow_model_name
-                )
-                return {"promoted": False, "reason": "Aucune version dans le Registry"}
-
-            # Prendre la version la plus récente
-            latest_version = max(versions, key=lambda v: int(v.version))
-            current_stage  = latest_version.current_stage
-
-            if current_stage in ("Staging", "Production"):
-                logger.info(
-                    "Modèle version %s déjà au stade '%s' — pas de changement.",
-                    latest_version.version, current_stage
-                )
-            else:
-                client.transition_model_version_stage(
-                    name=cfg.mlflow_model_name,
-                    version=latest_version.version,
-                    stage="Staging",
-                    archive_existing_versions=False,
-                )
-                logger.info(
-                    "✅ Modèle v%s promu vers Staging (eval_loss: %.4f)",
-                    latest_version.version, eval_loss
-                )
-
-            return {
-                "promoted":      True,
-                "model_name":    cfg.mlflow_model_name,
-                "model_version": latest_version.version,
-                "model_stage":   "Staging",
-                "eval_loss":     eval_loss,
-            }
-
-        except Exception as e:
-            logger.error("Erreur lors de la promotion : %s", e)
-            return {"promoted": False, "reason": str(e)}
-
-    # =========================================================================
-    # TÂCHE 5B — Log du résumé (parallèle à promote_to_staging)
-    # =========================================================================
+        return {
+            "promoted": True,
+            "model_name": cfg.mlflow_model_name,
+            "model_version": latest_version.version,
+            "model_stage": "Staging",
+            "eval_loss": metrics["eval_loss"],
+        }
 
     @task(task_id="log_training_summary")
-    def log_training_summary(
-        training_result: dict,
-        evaluation_result: dict,
-    ) -> None:
-        """
-        Génère et sauvegarde un résumé Markdown de l'entraînement.
-        S'exécute en parallèle de promote_to_staging.
-        """
-        import math
-        run_id    = training_result["run_id"]
-        eval_loss = evaluation_result["eval_loss"]
-        perplexity = evaluation_result["eval_perplexity"]
-        passes    = evaluation_result["passes_threshold"]
+    def log_training_summary(metrics: dict, promotion_result: dict) -> None:
+        """Write a lightweight summary visible from the mounted project files."""
+        summary_path = PROJECT_ROOT / "src" / "data" / "reports" / "remote_training_summary.md"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary = f"""# Remote Fine-tuning Summary
 
-        summary = f"""# Résumé du Fine-tuning — LFM2.5-350M Lean Startup
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+MLflow Run ID: `{metrics['run_id']}`
+Airflow Run Token: `{metrics['run_token']}`
 
-**Date :** {datetime.now().strftime('%Y-%m-%d %H:%M')}
-**MLflow Run ID :** `{run_id}`
+| Metric | Value |
+|---|---:|
+| Eval loss | {metrics['eval_loss']:.4f} |
+| Eval perplexity | {metrics['eval_perplexity']:.2f} |
+| Threshold | {MAX_ACCEPTABLE_EVAL_LOSS:.2f} |
+| Passes threshold | {metrics['passes_threshold']} |
 
-## Métriques finales
-
-| Métrique | Valeur |
-|---|---|
-| Eval Loss | `{eval_loss:.4f}` |
-| Perplexité | `{perplexity:.2f}` |
-| Seuil qualité | `{MAX_ACCEPTABLE_EVAL_LOSS}` |
-| Statut | {"✅ Passe" if passes else "❌ Échoue"} |
-
-## Interprétation
-
-Une perplexité de **{perplexity:.1f}** signifie que le modèle est "aussi incertain
-qu'entre {perplexity:.0f} tokens équiprobables" en moyenne.
-{"Un score < 15 est excellent pour ce type de tâche." if perplexity < 15 else
- "Envisager plus d'epochs ou un dataset plus large." if perplexity > 25 else
- "Score correct — acceptable pour la mise en production."}
-
-## Prochaine étape
-
-{"Promouvoir de **Staging → Production** via l'UI MLflow ou le DAG d'évaluation." if passes else
- "Analyser les erreurs, enrichir le dataset, et relancer le fine-tuning."}
+Promotion: {promotion_result}
 """
-
-        summary_path = PROJECT_ROOT / "TRAINING_SUMMARY.md"
         summary_path.write_text(summary, encoding="utf-8")
-        logger.info("Résumé sauvegardé : %s", summary_path)
+        logger.info("Résumé sauvegardé: %s", summary_path)
 
-    # =========================================================================
-    # TÂCHE 6 — Notification finale
-    # =========================================================================
-
-    @task(
-        task_id="notify_completion",
-        trigger_rule=TriggerRule.ALL_DONE,
-    )
-    def notify_completion(
-        promotion_result: dict,
-        evaluation_result: dict,
-    ) -> None:
-        """Log le résumé final du pipeline."""
-        promoted   = promotion_result.get("promoted", False)
-        eval_loss  = evaluation_result.get("eval_loss", 0)
-        perplexity = evaluation_result.get("eval_perplexity", 0)
-
+    @task(task_id="notify_completion", trigger_rule=TriggerRule.ALL_DONE)
+    def notify_completion(metrics: dict, promotion_result: dict) -> None:
         logger.info("=" * 60)
-        if promoted:
-            logger.info("✅ Pipeline fine-tuning terminé avec succès")
-            logger.info(
-                "   Modèle %s v%s → Staging",
-                promotion_result.get("model_name", ""),
-                promotion_result.get("model_version", ""),
-            )
-        else:
-            logger.warning("⚠ Pipeline fine-tuning terminé — modèle NON promu")
-            logger.warning("   Raison : %s", promotion_result.get("reason", "inconnue"))
-
-        logger.info(
-            "   Eval loss: %.4f | Perplexité: %.2f",
-            eval_loss, perplexity
-        )
+        logger.info("Pipeline fine-tuning distant terminé")
+        logger.info("Run MLflow: %s", metrics.get("run_id"))
+        logger.info("Eval loss: %.4f", metrics.get("eval_loss", 999.0))
+        logger.info("Promotion: %s", promotion_result)
         logger.info("=" * 60)
-
-    # =========================================================================
-    # ORCHESTRATION
-    # =========================================================================
 
     start = EmptyOperator(task_id="start")
+    local = check_local_services()
+    remote = build_remote_training_command(local)
+    training = run_remote_fine_tuning(remote)
+    metrics = collect_mlflow_metrics(training)
+    promotion = promote_to_staging(metrics)
+    summary = log_training_summary(metrics, promotion)
+    notify = notify_completion(metrics, promotion)
 
-    prereqs  = check_prerequisites()
-    pull     = pull_dataset_from_dvc()
-    training = run_fine_tuning(prerequisites=prereqs)
-    eval_res = evaluate_fine_tuned_model(training_result=training)
-
-    # Tâches parallèles
-    promotion = promote_to_staging(evaluation_result=eval_res)
-    summary   = log_training_summary(
-        training_result=training,
-        evaluation_result=eval_res,
-    )
-
-    notify = notify_completion(
-        promotion_result=promotion,
-        evaluation_result=eval_res,
-    )
-
-    # Graphe
-    start >> prereqs >> pull >> training >> eval_res
-    eval_res >> [promotion, summary]
+    start >> local >> remote >> training >> metrics >> promotion
+    metrics >> summary
     [promotion, summary] >> notify
 
 

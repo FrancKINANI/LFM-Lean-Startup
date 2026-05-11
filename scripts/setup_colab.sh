@@ -8,13 +8,9 @@ echo "🚀 Début de l'installation de l'environnement Colab..."
 # 1. Mise à jour de pip
 pip install --upgrade pip
 
-# 2. Installation des dépendances ML lourdes
-echo "📦 Installation des bibliothèques de Deep Learning..."
-pip install -r scripts/colab_requirements.txt
-
-# 3. Installation des dépendances de base du projet (sans les lourdes, déjà géré)
-echo "📦 Installation des outils de gestion du projet..."
-pip install -r requirements.txt
+# 2. Installation des dépendances GPU + suivi distant
+echo "📦 Installation des bibliothèques de fine-tuning distant..."
+pip install -r scripts/remote_training_requirements.txt
 
 # 4. Vérification de l'accès GPU
 echo "🖥️ Vérification du GPU..."

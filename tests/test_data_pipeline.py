@@ -209,7 +209,7 @@ class TestMetadata:
 
     def test_required_metadata_fields(self, sample_examples):
         """Chaque exemple doit avoir les champs de métadonnées requis."""
-        required = ["category", "has_tool_use"]
+        required = ["category", "has_tool_use", "Label", "Severity", "Difficulty", "lean_principle"]
         for i, ex in enumerate(sample_examples):
             for field in required:
                 assert field in ex.metadata, (
@@ -223,6 +223,24 @@ class TestMetadata:
             assert isinstance(val, bool), (
                 f"has_tool_use doit être bool, reçu : {type(val).__name__}"
             )
+
+    def test_label_severity_difficulty_values_are_valid(self, sample_examples):
+        """Les champs de supervision gardent un vocabulaire contrôlé."""
+        valid_labels = {"Green Flag", "Red Flag", "Mixed"}
+        valid_severities = {"Mineur", "Majeur", "Fatal", "Non applicable"}
+        valid_difficulties = {"Explicite", "Implicite", "Ambigu", "Mixte"}
+
+        for ex in sample_examples:
+            assert ex.metadata.get("Label") in valid_labels
+            assert ex.metadata.get("Severity") in valid_severities
+            assert ex.metadata.get("Difficulty") in valid_difficulties
+
+    def test_response_contains_expected_label(self, sample_examples):
+        """La réponse finale doit répéter le label attendu par les métadonnées."""
+        for ex in sample_examples[:200]:
+            final_answer = ex.messages[-1].content
+            expected = ex.metadata.get("Label")
+            assert f"Label: {expected}" in final_answer
 
     def test_category_values_are_valid(self, sample_examples):
         """Les catégories sont dans l'ensemble défini."""
